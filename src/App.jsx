@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 const cutoffDate = new Date(2026, 4, 9);
 const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
 const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
+const REPLY_TO_DEFAULT = "commandes@boutique-karatesunfuki.com";
+const STORAGE_KEY = "sunfuki-email-tool-v1";
 
 const defaultTemplates = [
   {
@@ -314,6 +316,23 @@ function htmlFromBody(body) {
   return String(body || "").replace(/\n/g, "<br />");
 }
 
+function mapServerLog(row) {
+  return {
+    id: row.id || `server-${Date.now()}`,
+    email: row.recipient_email || "",
+    originalEmail: row.original_email || row.recipient_email || "",
+    subject: row.subject || "",
+    body: row.body || "",
+    templateName: row.template_name || "",
+    mode: row.mode || "",
+    date: row.created_at ? new Date(row.created_at).toLocaleString("fr-CA") : "",
+    prenom: row.prenom || "",
+    success: row.status !== "error",
+    error: row.error || null,
+    resendId: row.resend_id || null,
+  };
+}
+
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(email));
 }
@@ -354,6 +373,57 @@ export default function SunfukiEmailToolPreview() {
   const [resendConnected, setResendConnected] = useState(false);
   const [testEmail, setTestEmail] = useState(TEST_EMAIL_DEFAULT);
   const [fromEmail, setFromEmail] = useState(FROM_EMAIL_DEFAULT);
+  const [replyToEmail, setReplyToEmail] = useState(REPLY_TO_DEFAULT);
+  const [storageReady, setStorageReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      if (Array.isArray(saved.templates) && saved.templates.length) setTemplates(saved.templates);
+      if (saved.selectedTemplateId) setSelectedTemplateId(saved.selectedTemplateId);
+      if (saved.dateLimite) setDateLimite(saved.dateLimite);
+      if (saved.fromEmail) setFromEmail(saved.fromEmail);
+      if (saved.replyToEmail) setReplyToEmail(saved.replyToEmail);
+      if (saved.testEmail) setTestEmail(saved.testEmail);
+    } catch (error) {
+      console.warn("Impossible de charger la sauvegarde locale", error);
+    } finally {
+      setStorageReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        templates,
+        selectedTemplateId,
+        dateLimite,
+        fromEmail,
+        replyToEmail,
+        testEmail,
+      })
+    );
+  }, [storageReady, templates, selectedTemplateId, dateLimite, fromEmail, replyToEmail, testEmail]);
+
+  useEffect(() => {
+    loadServerHistory();
+  }, []);
+
+  async function loadServerHistory() {
+    try {
+      const response = await fetch("/.netlify/functions/get-email-logs");
+      if (!response.ok) return;
+      const result = await response.json();
+      if (Array.isArray(result.logs)) {
+        setSentLog(result.logs.map(mapServerLog));
+      }
+    } catch (error) {
+      console.warn("Historique Supabase non chargé", error);
+    }
+  }
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || templates[0];
   const selectedRow = rows.find((row) => row.id === selectedRowId) || rows[0];
@@ -477,7 +547,6 @@ export default function SunfukiEmailToolPreview() {
       setSelectedIds(new Set(autoIds));
       setSelectedRowId(autoIds[0] || parsed.rows[0].id);
       setProductFilters([]);
-      setSentLog([]);
       setMessage(`${parsed.rows.length} ligne(s) importée(s), ${parsed.headers.length} colonne(s), ${autoIds.length} sélectionnée(s) automatiquement.`);
     } catch (error) {
       setMessage(`Erreur import CSV : ${error.message}`);
@@ -506,6 +575,9 @@ export default function SunfukiEmailToolPreview() {
     const emailsToSend = selectedRows.map((row) => ({
       rowId: row.id,
       prenom: row.prenom,
+      competitor: row.competitor,
+      dojo: row.dojo,
+      equipe: row.equipe,
       to: testMode ? testEmail : row.email,
       originalEmail: row.email,
       subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
@@ -523,20 +595,20 @@ export default function SunfukiEmailToolPreview() {
         },
         body: JSON.stringify({
           from: fromEmail,
+          replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
-  to: email.to,
-  subject: email.subject,
-  html: htmlFromBody(email.body),
-  text: email.body,
-
-  originalEmail: email.originalEmail,
-  prenom: email.prenom,
-  competitor: email.prenom,
-  dojo: selectedRow?.dojo || "",
-  equipe: selectedRow?.equipe || "",
-  templateName: email.templateName,
-  mode: email.mode,
-})),
+            to: email.to,
+            subject: email.subject,
+            html: htmlFromBody(email.body),
+            text: email.body,
+            originalEmail: email.originalEmail,
+            prenom: email.prenom,
+            competitor: email.competitor,
+            dojo: email.dojo,
+            equipe: email.equipe,
+            templateName: email.templateName,
+            mode: email.mode,
+          })),
         }),
       });
 
@@ -570,6 +642,7 @@ export default function SunfukiEmailToolPreview() {
       }
 
       setMessage(`${result.sent || logs.length} courriel(s) envoyé(s) via Resend.`);
+      await loadServerHistory();
     } catch (error) {
       setMessage(`Envoi non confirmé : ${error.message}. Vérifie les logs Netlify de la fonction send-emails.`);
     }
@@ -582,7 +655,7 @@ export default function SunfukiEmailToolPreview() {
           <div>
             <div className="inline-flex rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 px-3 py-1 text-sm mb-3">Outil d'envoi — Karaté Sunfuki</div>
             <h1 className="text-3xl lg:text-4xl font-bold">Envoi ciblé de courriels depuis un CSV</h1>
-            <p className="text-neutral-400 mt-2">Import CSV, filtres, sélection manuelle, templates et historique.</p>
+            <p className="text-neutral-400 mt-2">Import CSV, filtres, sélection manuelle, templates et historique partagé Supabase.</p>
           </div>
           <label className="bg-neutral-800 hover:bg-neutral-700 text-white rounded-2xl px-5 py-3 cursor-pointer font-medium">
             Importer CSV
@@ -595,6 +668,7 @@ export default function SunfukiEmailToolPreview() {
         <Panel title="Connexion Resend / Netlify">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-end">
             <Input label="Adresse expéditeur (FROM)" value={fromEmail} onChange={setFromEmail} />
+            <Input label="Adresse de réponse (Reply-To)" value={replyToEmail} onChange={setReplyToEmail} />
             <button onClick={connectResend} className="btn-gold h-[52px]">Activer l'envoi via Netlify</button>
             <div className={`lg:col-span-2 rounded-2xl border px-4 py-3 text-sm font-semibold ${resendConnected ? "bg-green-500/10 border-green-500/30 text-green-300" : "bg-neutral-900 border-neutral-700 text-neutral-400"}`}>
               {resendConnected ? "Prêt à envoyer via la fonction Netlify" : "Fonction Netlify non activée dans l'interface"}
@@ -603,7 +677,9 @@ export default function SunfukiEmailToolPreview() {
           <div className="mt-4 rounded-2xl bg-neutral-950 border border-neutral-800 p-4 text-sm text-neutral-300">
             <div className="font-semibold text-white mb-2">Important</div>
             <div>La clé API Resend ne doit pas être dans React. Elle doit être ajoutée dans Netlify comme variable d'environnement : RESEND_API_KEY.</div>
-            <div>Le frontend appellera : /.netlify/functions/send-emails</div>
+            <div>Le frontend appelle : /.netlify/functions/send-emails</div>
+            <div>L'historique partagé est chargé depuis : /.netlify/functions/get-email-logs</div>
+            <div>Les réponses clients iront vers l'adresse Reply-To configurée ci-dessus.</div>
           </div>
         </Panel>
 
@@ -613,6 +689,13 @@ export default function SunfukiEmailToolPreview() {
           <Metric title="Détectées auto" value={rows.filter(isEligibleOrder).length} icon="⚠️" warning />
           <Metric title="Sélectionnées" value={selectedRows.length} icon="☑️" success />
         </div>
+
+        <Panel title="Mémoire de l'outil">
+          <div className="text-sm text-neutral-300 space-y-2">
+            <div>Les templates, la date limite, l'adresse test, le FROM et le Reply-To restent sauvegardés dans ce navigateur.</div>
+            <div>L'historique d'envoi est maintenant partagé et relu depuis Supabase pour tous les utilisateurs.</div>
+          </div>
+        </Panel>
 
         <Panel title="Gestion des templates">
           <div className="flex flex-wrap gap-2 mb-4">
@@ -778,8 +861,9 @@ export default function SunfukiEmailToolPreview() {
           </Panel>
 
           <Panel className="lg:col-span-2" title="Historique des envois">
+            <button onClick={loadServerHistory} className="btn-dark mb-4">Recharger l'historique partagé</button>
             {!sentLog.length ? (
-              <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi simulé.</div>
+              <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi enregistré.</div>
             ) : (
               <div className="space-y-3 max-h-[650px] overflow-auto pr-1">
                 {sentLog.map((log) => {
