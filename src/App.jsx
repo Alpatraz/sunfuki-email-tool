@@ -6,7 +6,6 @@ const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
 const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
 const REPLY_TO_DEFAULT = "commandes@boutique-karatesunfuki.com";
 const STORAGE_KEY = "sunfuki-email-tool-v1";
-const PANEL_IDS = ["connexion", "templates", "variables", "commandes", "preview", "envoi", "historique"];
 
 const defaultTemplates = [
   {
@@ -16,6 +15,8 @@ const defaultTemplates = [
     body: `Bonjour {{prenom}},
 
 Merci d'avoir passé ta commande d'équipement pour la saison 2026/2027 avec {{Équipe}} — Dojo de {{Dojo}}.
+
+Numéro de commande : {{Commande}}
 
 En raison d'une erreur technique de notre côté, les tailles n'ont pas été enregistrées correctement dans notre système pour les commandes passées avant le 9 mai 2026.
 
@@ -28,8 +29,6 @@ Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
 {{confirmation_link}}
 
 Merci de compléter le formulaire avant le {{date_limite}}.
-
-Nous nous excusons pour ce désagrément.
 
 L'équipe Karaté Sunfuki`,
   },
@@ -321,6 +320,7 @@ function renderTemplate(text, row, dateLimite) {
     equipe: row?.equipe || "",
     dojo: row?.dojo || "",
     date_commande: row?.dateCommande || "",
+    commande: row?.raw?.Commande || "",
     liste_produits: productList(row?.produits || []),
     date_limite: dateLimite || "",
   };
@@ -350,6 +350,7 @@ function mapServerLog(row) {
     success: row.status !== "error",
     error: row.error || null,
     resendId: row.resend_id || null,
+    orderNumber: row.order_number || "",
     hasResponse: Boolean(row.has_response),
     responseCount: row.response_count || 0,
     responses: row.responses || [],
@@ -377,9 +378,9 @@ if (typeof window !== "undefined") {
 
 export default function SunfukiEmailToolPreview() {
   if (window.location.pathname === "/reponse") {
-  return <ResponsePage />;
-}
-  
+    return <ResponsePage />;
+  }
+
   const [rows, setRows] = useState(demoRows);
   const [headers, setHeaders] = useState(Object.keys(demoRows[0].raw));
   const [selectedIds, setSelectedIds] = useState(() => new Set(demoRows.filter(isEligibleOrder).map((row) => row.id)));
@@ -402,7 +403,6 @@ export default function SunfukiEmailToolPreview() {
   const [fromEmail, setFromEmail] = useState(FROM_EMAIL_DEFAULT);
   const [replyToEmail, setReplyToEmail] = useState(REPLY_TO_DEFAULT);
   const [storageReady, setStorageReady] = useState(false);
-  const [collapsedPanels, setCollapsedPanels] = useState(() => new Set(["variables"]));
 
   useEffect(() => {
     try {
@@ -497,36 +497,7 @@ export default function SunfukiEmailToolPreview() {
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
   const previewSubject = renderTemplate(selectedTemplate.subject, selectedRow, dateLimite);
   const previewBody = renderTemplate(selectedTemplate.body, selectedRow, dateLimite);
-  const variables = ["prenom", "nom", "competiteur", "email", "equipe", "dojo", "date_commande", "liste_produits", "date_limite", ...headers];
-
-  function isPanelCollapsed(id) {
-    return collapsedPanels.has(id);
-  }
-
-  function togglePanel(id) {
-    setCollapsedPanels((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function panelProps(id) {
-    return {
-      collapsible: true,
-      collapsed: isPanelCollapsed(id),
-      onToggle: () => togglePanel(id),
-    };
-  }
-
-  function collapseSecondaryPanels() {
-    setCollapsedPanels(new Set(PANEL_IDS.filter((id) => id !== "commandes")));
-  }
-
-  function expandAllPanels() {
-    setCollapsedPanels(new Set());
-  }
+  const variables = ["prenom", "nom", "competiteur", "email", "equipe", "dojo", "date_commande", "commande", "liste_produits", "date_limite", ...headers];
 
   function toggleRow(id) {
     setSelectedIds((previous) => {
@@ -631,6 +602,7 @@ export default function SunfukiEmailToolPreview() {
     const now = new Date().toLocaleString("fr-CA");
     const emailsToSend = selectedRows.map((row) => ({
       rowId: row.id,
+      orderNumber: row.raw?.Commande || "",
       prenom: row.prenom,
       competitor: row.competitor,
       dojo: row.dojo,
@@ -642,14 +614,6 @@ export default function SunfukiEmailToolPreview() {
       templateName: selectedTemplate.name,
       mode: testMode ? "TEST" : "RÉEL",
       date: now,
-      items: row.produits
-        .filter((product) => clean(product.produit) && !clean(product.taille) && !clean(product.produit).toLowerCase().includes("engagement"))
-        .map((product) => ({
-          product_name: product.produitBase || productBaseName(product.produit),
-          quantity: product.qte || "1",
-          current_size: product.taille || "",
-          needs_size: true,
-        })),
     }));
 
     try {
@@ -662,6 +626,7 @@ export default function SunfukiEmailToolPreview() {
           from: fromEmail,
           replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
+            orderNumber: email.orderNumber,
             to: email.to,
             subject: email.subject,
             html: htmlFromBody(email.body),
@@ -673,7 +638,6 @@ export default function SunfukiEmailToolPreview() {
             equipe: email.equipe,
             templateName: email.templateName,
             mode: email.mode,
-            items: email.items,
           })),
         }),
       });
@@ -695,6 +659,10 @@ export default function SunfukiEmailToolPreview() {
           success: Boolean(serverResult?.success),
           error: serverResult?.error || null,
           resendId: serverResult?.id || null,
+          orderNumber: email.orderNumber || "",
+          hasResponse: false,
+          responseCount: 0,
+          responses: [],
         };
       });
 
@@ -714,6 +682,56 @@ export default function SunfukiEmailToolPreview() {
     }
   }
 
+  function exportResponsesCsv() {
+    const exportRows = [];
+
+    sentLog.forEach((log) => {
+      if (!log.responses?.length) {
+        exportRows.push({
+          commande: log.orderNumber || "",
+          statut: "En attente",
+          email: log.email || "",
+          prenom: log.prenom || "",
+          produit: "",
+          taille: "",
+          commentaire: "",
+        });
+        return;
+      }
+
+      log.responses.forEach((response) => {
+        exportRows.push({
+          commande: log.orderNumber || "",
+          statut: "Répondu",
+          email: log.email || "",
+          prenom: log.prenom || "",
+          produit: response.product_name || "",
+          taille: response.confirmed_size || "",
+          commentaire: response.comments || "",
+        });
+      });
+    });
+
+    const headers = ["commande", "statut", "email", "prenom", "produit", "taille", "commentaire"];
+
+    const csv = [
+      headers.join(","),
+      ...exportRows.map((row) =>
+        headers.map((header) => `"${String(row[header] || "").replaceAll('"', '""')}"`).join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `suivi-tailles-sunfuki-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -731,12 +749,7 @@ export default function SunfukiEmailToolPreview() {
 
         <InfoBox>{message}</InfoBox>
 
-        <div className="flex flex-wrap gap-2">
-          <button onClick={collapseSecondaryPanels} className="btn-dark">Réduire les blocs secondaires</button>
-          <button onClick={expandAllPanels} className="btn-dark">Tout afficher</button>
-        </div>
-
-        <Panel title="Connexion Resend / Netlify" {...panelProps("connexion")}>
+        <Panel title="Connexion Resend / Netlify">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-end">
             <Input label="Adresse expéditeur (FROM)" value={fromEmail} onChange={setFromEmail} />
             <Input label="Adresse de réponse (Reply-To)" value={replyToEmail} onChange={setReplyToEmail} />
@@ -761,8 +774,14 @@ export default function SunfukiEmailToolPreview() {
           <Metric title="Sélectionnées" value={selectedRows.length} icon="☑️" success />
         </div>
 
+        <Panel title="Mémoire de l'outil">
+          <div className="text-sm text-neutral-300 space-y-2">
+            <div>Les templates, la date limite, l'adresse test, le FROM et le Reply-To restent sauvegardés dans ce navigateur.</div>
+            <div>L'historique d'envoi est maintenant partagé et relu depuis Supabase pour tous les utilisateurs.</div>
+          </div>
+        </Panel>
 
-        <Panel title="Gestion des templates" {...panelProps("templates")}>
+        <Panel title="Gestion des templates">
           <div className="flex flex-wrap gap-2 mb-4">
             <button onClick={createTemplate} className="btn-gold">Ajouter</button>
             <button onClick={() => setEditingTemplate({ ...selectedTemplate })} className="btn-dark">Modifier</button>
@@ -792,7 +811,7 @@ export default function SunfukiEmailToolPreview() {
           )}
         </Panel>
 
-        <Panel title="Variables disponibles" {...panelProps("variables")}>
+        <Panel title="Variables disponibles">
           <button onClick={() => setShowVariables((value) => !value)} className="btn-dark mb-3">{showVariables ? "Masquer" : "Afficher"}</button>
           {showVariables && (
             <div className="flex flex-wrap gap-2">
@@ -804,7 +823,7 @@ export default function SunfukiEmailToolPreview() {
         </Panel>
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
-          <Panel className="xl:col-span-3" title="Commandes importées" {...panelProps("commandes")}>
+          <Panel className="xl:col-span-3" title="Commandes importées">
             <div className="flex flex-col lg:flex-row gap-2 mb-4">
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher..." className="input" />
               <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)} className="input lg:w-56">
@@ -883,7 +902,7 @@ export default function SunfukiEmailToolPreview() {
             </div>
           </Panel>
 
-          <Panel className="xl:col-span-2" title="Prévisualisation" {...panelProps("preview")}>
+          <Panel className="xl:col-span-2" title="Prévisualisation">
             <label className="block text-sm font-semibold mb-2">Template</label>
             <div className="flex gap-2 mb-4">
               <select value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} className="input">
@@ -914,7 +933,7 @@ export default function SunfukiEmailToolPreview() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Panel title="Envoi" {...panelProps("envoi")}>
+          <Panel title="Envoi">
             <div className="rounded-2xl bg-neutral-950 border border-neutral-800 p-4 mb-4 space-y-4">
               <label className="flex items-center justify-between gap-3 cursor-pointer">
                 <span><span className="font-semibold">Mode test</span><span className="block text-sm text-neutral-400">Envoie tout vers l'adresse de test configurée</span></span>
@@ -925,8 +944,9 @@ export default function SunfukiEmailToolPreview() {
             <button onClick={sendEmails} disabled={!selectedRows.length} className="btn-gold w-full disabled:opacity-50">Envoyer à {selectedRows.length} personne(s)</button>
           </Panel>
 
-          <Panel className="lg:col-span-2" title="Historique des envois" {...panelProps("historique")}>
+          <Panel className="lg:col-span-2" title="Historique des envois">
             <button onClick={loadServerHistory} className="btn-dark mb-4">Recharger l'historique partagé</button>
+            <button onClick={exportResponsesCsv} className="btn-gold mb-4 ml-2">Exporter CSV</button>
             {!sentLog.length ? (
               <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi enregistré.</div>
             ) : (
@@ -938,6 +958,9 @@ export default function SunfukiEmailToolPreview() {
                       <button type="button" onClick={() => setOpenLogId(open ? null : log.id)} className="w-full text-left p-4 hover:bg-neutral-900">
                         <div className="font-semibold">{log.prenom || "Sans prénom"} — {log.email}</div>
                         <div className="text-sm text-yellow-300 mt-1">{log.subject}</div>
+                        <div className="text-xs text-neutral-400 mt-1">
+                          Commande : {log.orderNumber || "—"}
+                        </div>
                         <div className={log.hasResponse ? "text-xs text-green-300 mt-1" : "text-xs text-yellow-300 mt-1"}>
                           {log.hasResponse ? `Répondu — ${log.responseCount} taille(s) confirmée(s)` : "En attente de réponse"}
                         </div>
@@ -961,11 +984,13 @@ export default function SunfukiEmailToolPreview() {
                           <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed p-4 overflow-auto max-h-[400px]">{log.body}</pre>
                           {log.hasResponse && (
                             <div className="border-t border-neutral-200 p-4">
-                              <div className="font-bold mb-2">Réponses reçues</div>
+                              <div className="font-bold mb-2">Tailles confirmées</div>
                               {log.responses.map((response) => (
                                 <div key={response.id} className="text-sm border-b py-2">
-                                  <strong>{response.product_name}</strong> : {response.confirmed_size}
-                                  {response.comments ? <div>Commentaire : {response.comments}</div> : null}
+                                  <div><strong>Commande :</strong> {log.orderNumber || "—"}</div>
+                                  <div><strong>Produit :</strong> {response.product_name}</div>
+                                  <div><strong>Taille :</strong> {response.confirmed_size}</div>
+                                  {response.comments ? <div><strong>Commentaire :</strong> {response.comments}</div> : null}
                                 </div>
                               ))}
                             </div>
@@ -981,7 +1006,7 @@ export default function SunfukiEmailToolPreview() {
         </div>
       </div>
 
-      <style>{`.btn-gold{background:#eab308;color:#111827;font-weight:700;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-gold:hover{background:#facc15}.btn-dark{background:#262626;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-dark:hover{background:#404040}.btn-red{background:#7f1d1d;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.input{width:100%;background:white;color:black;border:1px solid #d4d4d4;border-radius:1rem;padding:.75rem;outline:none}.input:focus{border-color:#eab308}.btn-panel-toggle{display:inline-flex;align-items:center;gap:.45rem;background:#171717;color:#e5e5e5;border:1px solid #404040;border-radius:999px;padding:.45rem .8rem;font-size:.8rem;font-weight:700;cursor:pointer}.btn-panel-toggle:hover{background:#262626;border-color:#eab308;color:#facc15}`}</style>
+      <style>{`.btn-gold{background:#eab308;color:#111827;font-weight:700;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-gold:hover{background:#facc15}.btn-dark{background:#262626;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-dark:hover{background:#404040}.btn-red{background:#7f1d1d;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.input{width:100%;background:white;color:black;border:1px solid #d4d4d4;border-radius:1rem;padding:.75rem;outline:none}.input:focus{border-color:#eab308}`}</style>
     </div>
   );
 }
@@ -990,23 +1015,8 @@ function InfoBox({ children }) {
   return <div className="rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-200 px-4 py-3 text-sm">{children}</div>;
 }
 
-function Panel({ title, children, className = "", collapsible = false, collapsed = false, onToggle }) {
-  return (
-    <section className={`bg-neutral-900 border border-neutral-800 rounded-3xl shadow-xl p-5 ${className}`}>
-      {title && (
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <h2 className="text-xl font-bold">{title}</h2>
-          {collapsible && (
-            <button type="button" onClick={onToggle} className="btn-panel-toggle" aria-expanded={!collapsed}>
-              {collapsed ? "Afficher" : "Réduire"}
-              <span className="text-lg leading-none">{collapsed ? "▾" : "▴"}</span>
-            </button>
-          )}
-        </div>
-      )}
-      {!collapsed && children}
-    </section>
-  );
+function Panel({ title, children, className = "" }) {
+  return <section className={`bg-neutral-900 border border-neutral-800 rounded-3xl shadow-xl p-5 ${className}`}>{title && <h2 className="text-xl font-bold mb-4">{title}</h2>}{children}</section>;
 }
 
 function Metric({ title, value, icon, warning, success }) {
