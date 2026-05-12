@@ -3,15 +3,27 @@ const RESEND_API_URL = "https://api.resend.com/emails";
 function json(statusCode, body) {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+    },
     body: JSON.stringify(body),
   };
 }
 
-async function saveEmailLog(log) {
-  const url = `${process.env.SUPABASE_URL}/rest/v1/email_logs`;
+function clean(value) {
+  return String(value ?? "").trim();
+}
 
-  const response = await fetch(url, {
+function htmlEscape(value) {
+  return clean(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function supabaseInsert(table, payload) {
+  const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}`, {
     method: "POST",
     headers: {
       apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -19,13 +31,92 @@ async function saveEmailLog(log) {
       "Content-Type": "application/json",
       Prefer: "return=representation",
     },
-    body: JSON.stringify(log),
+    body: JSON.stringify(payload),
   });
 
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    console.error("SUPABASE ERROR:", response.status, data);
+    throw new Error(
+      `Erreur Supabase ${table}: ${
+        data?.message || data?.error || response.status
+      }`
+    );
+  }
+
+  return Array.isArray(data) ? data[0] : data;
+}
+
+function buildConfirmationButton(link) {
+  if (!link) return "";
+
+  return `
+    <p style="margin:24px 0;">
+      <a href="${htmlEscape(link)}" style="display:inline-block;background:#d4af37;color:#111;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;">
+        Confirmer mes tailles
+      </a>
+    </p>
+  `;
+}
+
+function injectConfirmationLink(html, confirmationLink) {
+  if (!confirmationLink) return html;
+
+  if (html.includes("{{confirmation_link}}")) {
+    return html.replaceAll("{{confirmation_link}}", confirmationLink);
+  }
+
+  return `${html}${buildConfirmationButton(confirmationLink)}`;
+}
+
+function extractItems(email) {
+  if (Array.isArray(email.items) && email.items.length) {
+    return email.items
+      .map((item) => ({
+        product_name: clean(item.product_name || item.productName || item.produit || item.name),
+        quantity: clean(item.quantity || item.qte || item.qty || "1"),
+        current_size: clean(item.current_size || item.size || item.taille || ""),
+        needs_size: item.needs_size !== false,
+      }))
+      .filter((item) => item.product_name);
+  }
+
+  if (Array.isArray(email.products) && email.products.length) {
+    return email.products
+      .map((item) => ({
+        product_name: clean(item.product_name || item.productName || item.produit || item.name),
+        quantity: clean(item.quantity || item.qte || item.qty || "1"),
+        current_size: clean(item.current_size || item.size || item.taille || ""),
+        needs_size: item.needs_size !== false,
+      }))
+      .filter((item) => item.product_name);
+  }
+
+  return [];
+}
+
+async function sendResendEmail({ apiKey, from, replyTo, to, subject, html, text }) {
+  const response = await fetch(RESEND_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      reply_to: replyTo || undefined,
+      subject,
+      html,
+      text: text || undefined,
+      tags: [{ name: "tool", value: "sunfuki-email-tool" }],
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || "Erreur Resend inconnue");
   }
 
   return data;
@@ -37,11 +128,13 @@ export async function handler(event) {
   }
 
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return json(500, { error: "RESEND_API_KEY manquante." });
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const siteUrl = clean(process.env.SITE_URL || "https://sunfuki-email-tool.netlify.app");
 
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return json(500, { error: "Variables Supabase manquantes." });
-  }
+  if (!apiKey) return json(500, { error: "RESEND_API_KEY manquante." });
+  if (!supabaseUrl) return json(500, { error: "SUPABASE_URL manquante." });
+  if (!supabaseKey) return json(500, { error: "SUPABASE_SERVICE_ROLE_KEY manquante." });
 
   let payload;
   try {
@@ -50,8 +143,8 @@ export async function handler(event) {
     return json(400, { error: "JSON invalide." });
   }
 
-  const from = String(payload.from || "").trim();
-  const replyTo = String(payload.replyTo || "").trim();
+  const from = clean(payload.from);
+  const replyTo = clean(payload.replyTo || payload.reply_to);
   const emails = Array.isArray(payload.emails) ? payload.emails : [];
 
   if (!from) return json(400, { error: "FROM manquant." });
@@ -60,53 +153,134 @@ export async function handler(event) {
   const results = [];
 
   for (const email of emails) {
-    const response = await fetch(RESEND_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const to = clean(email.to);
+    const subject = clean(email.subject);
+    const text = String(email.text || "");
+    const items = extractItems(email);
+
+    let emailLog = null;
+
+    try {
+      if (!to || !subject || !email.html) {
+        throw new Error("Courriel invalide : to, subject ou html manquant.");
+      }
+
+      emailLog = await supabaseInsert("email_logs", {
+        resend_id: null,
+        recipient_email: to,
+        original_email: clean(email.originalEmail || to),
+        prenom: clean(email.prenom),
+        competitor: clean(email.competitor),
+        dojo: clean(email.dojo),
+        equipe: clean(email.equipe),
+        subject,
+        body: text,
+        template_name: clean(email.templateName),
+        status: "pending",
+        error: null,
+        mode: clean(email.mode),
+      });
+
+      const emailLogId = emailLog?.id;
+      const confirmationLink = emailLogId
+        ? `${siteUrl}/reponse?id=${encodeURIComponent(emailLogId)}`
+        : "";
+
+      if (emailLogId && items.length) {
+        await supabaseInsert(
+          "email_log_items",
+          items.map((item) => ({
+            email_log_id: emailLogId,
+            product_name: item.product_name,
+            quantity: item.quantity,
+            current_size: item.current_size,
+            needs_size: item.needs_size,
+          }))
+        );
+      }
+
+      const htmlWithLink = injectConfirmationLink(String(email.html || ""), confirmationLink);
+      const textWithLink = confirmationLink
+        ? `${text}\n\nConfirmer mes tailles : ${confirmationLink}`
+        : text;
+
+      const resendData = await sendResendEmail({
+        apiKey,
         from,
-        to: [email.to],
-        reply_to: replyTo || undefined,
-        subject: email.subject,
-        html: email.html,
-        text: email.text || undefined,
-        tags: [{ name: "tool", value: "sunfuki-email-tool" }],
-      }),
-    });
+        replyTo,
+        to,
+        subject,
+        html: htmlWithLink,
+        text: textWithLink,
+      });
 
-    const data = await response.json().catch(() => ({}));
-    const success = response.ok;
-    const resendId = data?.id || null;
-    const error = success ? null : data?.message || data?.error || "Erreur Resend inconnue";
+      const resendId = resendData?.id || null;
 
-    await saveEmailLog({
-      resend_id: resendId,
-      recipient_email: email.to,
-      original_email: email.originalEmail || email.to,
-      prenom: email.prenom || "",
-      competitor: email.competitor || "",
-      dojo: email.dojo || "",
-      equipe: email.equipe || "",
-      subject: email.subject,
-      body: email.text || "",
-      template_name: email.templateName || "",
-      status: success ? "sent" : "error",
-      error,
-      mode: email.mode || "",
-    });
+      if (emailLogId) {
+        await fetch(`${supabaseUrl}/rest/v1/email_logs?id=eq.${emailLogId}`, {
+          method: "PATCH",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            resend_id: resendId,
+            status: "sent",
+            error: null,
+          }),
+        });
+      }
 
-    results.push({
-      to: email.to,
-      success,
-      id: resendId,
-      error,
-    });
+      results.push({
+        to,
+        success: true,
+        id: resendId,
+        email_log_id: emailLogId,
+        confirmation_link: confirmationLink,
+      });
+    } catch (error) {
+      const errorMessage = error.message || "Erreur inconnue";
+
+      if (emailLog?.id) {
+        await fetch(`${supabaseUrl}/rest/v1/email_logs?id=eq.${emailLog.id}`, {
+          method: "PATCH",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status: "error",
+            error: errorMessage,
+          }),
+        }).catch(() => null);
+      } else {
+        await supabaseInsert("email_logs", {
+          recipient_email: to,
+          original_email: clean(email.originalEmail || to),
+          prenom: clean(email.prenom),
+          competitor: clean(email.competitor),
+          dojo: clean(email.dojo),
+          equipe: clean(email.equipe),
+          subject,
+          body: text,
+          template_name: clean(email.templateName),
+          status: "error",
+          error: errorMessage,
+          mode: clean(email.mode),
+        }).catch(() => null);
+      }
+
+      results.push({
+        to,
+        success: false,
+        error: errorMessage,
+      });
+    }
   }
 
-  const failed = results.filter((r) => !r.success);
+  const failed = results.filter((result) => !result.success);
 
   return json(failed.length ? 207 : 200, {
     sent: results.length - failed.length,
