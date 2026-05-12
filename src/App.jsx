@@ -350,6 +350,9 @@ function mapServerLog(row) {
     success: row.status !== "error",
     error: row.error || null,
     resendId: row.resend_id || null,
+    hasResponse: Boolean(row.has_response),
+    responseCount: row.response_count || 0,
+    responses: row.responses || [],
   };
 }
 
@@ -935,6 +938,9 @@ export default function SunfukiEmailToolPreview() {
                       <button type="button" onClick={() => setOpenLogId(open ? null : log.id)} className="w-full text-left p-4 hover:bg-neutral-900">
                         <div className="font-semibold">{log.prenom || "Sans prénom"} — {log.email}</div>
                         <div className="text-sm text-yellow-300 mt-1">{log.subject}</div>
+                        <div className={log.hasResponse ? "text-xs text-green-300 mt-1" : "text-xs text-yellow-300 mt-1"}>
+                          {log.hasResponse ? `Répondu — ${log.responseCount} taille(s) confirmée(s)` : "En attente de réponse"}
+                        </div>
                         <div className="text-xs text-neutral-500 mt-1">{log.mode} · {log.date}</div>
                         {log.success ? (
                           <div className="text-xs text-green-300 mt-1">
@@ -953,6 +959,17 @@ export default function SunfukiEmailToolPreview() {
                             <div className="font-bold mt-1">{log.subject}</div>
                           </div>
                           <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed p-4 overflow-auto max-h-[400px]">{log.body}</pre>
+                          {log.hasResponse && (
+                            <div className="border-t border-neutral-200 p-4">
+                              <div className="font-bold mb-2">Réponses reçues</div>
+                              {log.responses.map((response) => (
+                                <div key={response.id} className="text-sm border-b py-2">
+                                  <strong>{response.product_name}</strong> : {response.confirmed_size}
+                                  {response.comments ? <div>Commentaire : {response.comments}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
