@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 
 const cutoffDate = new Date(2026, 4, 9);
 const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
-const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@boutique-karatesunfuki.com>";
+const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
 
 const defaultTemplates = [
   {
@@ -318,7 +318,22 @@ function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(email));
 }
 
-export default function App() {
+function runSelfTests() {
+  console.assert(productBaseName("Gants - Rouge - M") === "Gants", "productBaseName should remove color and size");
+  console.assert(productBaseName("Kangourou - Équipe Cobra - Noir - YL") === "Kangourou - Équipe Cobra", "productBaseName should keep product/team name");
+  console.assert(htmlFromBody("A\nB") === "A<br />B", "htmlFromBody should convert newlines");
+  console.assert(validateEmail("test@example.com") === true, "validateEmail should accept valid email");
+  console.assert(validateEmail("not-an-email") === false, "validateEmail should reject invalid email");
+  const parsed = parseCsv('Commande,Date,Compétiteur,Email compétiteur,Dojo,Équipe,Type de formulaire,Produit 1,Taille 1,Qté 1\n#1,06/05/2026 10:00,Marc Test,test@email.com,Laval,Équipe Cobra,Commande équipement compétition,Gants - Rouge - M,,1');
+  console.assert(parsed.rows.length === 1, "parseCsv should parse one row");
+  console.assert(parsed.rows[0].produits[0].produitBase === "Gants", "parseCsv should derive product base name");
+}
+
+if (typeof window !== "undefined") {
+  runSelfTests();
+}
+
+export default function SunfukiEmailToolPreview() {
   const [rows, setRows] = useState(demoRows);
   const [headers, setHeaders] = useState(Object.keys(demoRows[0].raw));
   const [selectedIds, setSelectedIds] = useState(() => new Set(demoRows.filter(isEligibleOrder).map((row) => row.id)));
@@ -345,12 +360,15 @@ export default function App() {
 
   const teams = useMemo(() => ["Toutes", ...Array.from(new Set(rows.map((row) => row.equipe).filter(Boolean)))], [rows]);
   const formTypes = useMemo(() => {
-    const values = rows.map((row) => clean(getField(row.raw, ["Type de formulaire", "Type formulaire", "Form Type", "Formulaire"]))).filter(Boolean);
+    const values = rows
+      .map((row) => clean(getField(row.raw, ["Type de formulaire", "Type formulaire", "Form Type", "Formulaire"])))
+      .filter(Boolean);
     return ["Tous", ...Array.from(new Set(values))];
   }, [rows]);
 
   const baseFilteredRows = useMemo(() => {
     const query = search.toLowerCase().trim();
+
     return rows.filter((row) => {
       const formType = clean(getField(row.raw, ["Type de formulaire", "Type formulaire", "Form Type", "Formulaire"]));
       const rawText = Object.values(row.raw || {}).join(" ").toLowerCase();
@@ -371,6 +389,7 @@ export default function App() {
   const activeProductFilters = productFilters.filter((product) => availableProducts.includes(product));
   const visibleRows = useMemo(() => {
     if (!activeProductFilters.length) return baseFilteredRows;
+
     return baseFilteredRows.filter((row) => {
       const rowProducts = (row.produits || []).map((product) => product.produitBase || productBaseName(product.produit));
       return activeProductFilters.some((filter) => rowProducts.includes(filter));
@@ -392,17 +411,21 @@ export default function App() {
   }
 
   function toggleProduct(product) {
-    setProductFilters((previous) => previous.includes(product) ? previous.filter((item) => item !== product) : [...previous, product]);
+    setProductFilters((previous) =>
+      previous.includes(product) ? previous.filter((item) => item !== product) : [...previous, product]
+    );
   }
 
   function saveTemplate() {
     if (!editingTemplate) return;
+
     const saved = {
       ...editingTemplate,
       name: clean(editingTemplate.name) || "Template sans nom",
       subject: clean(editingTemplate.subject) || "Sans objet",
       body: editingTemplate.body || "",
     };
+
     setTemplates((previous) => previous.map((template) => (template.id === saved.id ? saved : template)));
     setSelectedTemplateId(saved.id);
     setEditingTemplate(null);
@@ -415,6 +438,7 @@ export default function App() {
       subject: "Nouvel objet de courriel",
       body: `Bonjour {{prenom}},\n\nVotre message ici.\n\nL'équipe Karaté Sunfuki`,
     };
+
     setTemplates((previous) => [...previous, template]);
     setSelectedTemplateId(template.id);
     setEditingTemplate(template);
@@ -439,12 +463,14 @@ export default function App() {
   async function importCsv(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+
     try {
       const parsed = parseCsv(await file.text());
       if (!parsed.rows.length) {
         setMessage("CSV vide ou illisible.");
         return;
       }
+
       const autoIds = parsed.rows.filter(isEligibleOrder).map((row) => row.id);
       setRows(parsed.rows);
       setHeaders(parsed.headers);
@@ -471,48 +497,73 @@ export default function App() {
       return;
     }
 
+    if (!resendConnected) {
+      setMessage("Active d'abord l'envoi via Netlify avec le bouton de connexion.");
+      return;
+    }
+
     const now = new Date().toLocaleString("fr-CA");
-    const logs = selectedRows.map((row, index) => ({
-      id: `log-${Date.now()}-${index}`,
-      email: testMode ? testEmail : row.email,
+    const emailsToSend = selectedRows.map((row) => ({
+      rowId: row.id,
+      prenom: row.prenom,
+      to: testMode ? testEmail : row.email,
       originalEmail: row.email,
       subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
       body: renderTemplate(selectedTemplate.body, row, dateLimite),
       templateName: selectedTemplate.name,
       mode: testMode ? "TEST" : "RÉEL",
       date: now,
-      prenom: row.prenom,
-      status: "local",
     }));
-
-    setSentLog((previous) => [...logs, ...previous]);
-    if (logs[0]) setOpenLogId(logs[0].id);
-
-    if (!resendConnected) {
-      setMessage("Simulation locale uniquement : la connexion Netlify/Resend n'est pas activée.");
-      return;
-    }
 
     try {
       const response = await fetch("/.netlify/functions/send-emails", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           from: fromEmail,
-          emails: logs.map((log) => ({
-            to: log.email,
-            subject: log.subject,
-            html: htmlFromBody(log.body),
-            text: log.body,
+          emails: emailsToSend.map((email) => ({
+            to: email.to,
+            subject: email.subject,
+            html: htmlFromBody(email.body),
+            text: email.body,
           })),
         }),
       });
 
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || `Erreur serveur ${response.status}`);
-      setMessage(`${logs.length} courriel(s) envoyé(s) via Resend.`);
+
+      const logs = emailsToSend.map((email, index) => {
+        const serverResult = result?.results?.[index];
+        return {
+          id: `log-${Date.now()}-${index}`,
+          email: email.to,
+          originalEmail: email.originalEmail,
+          subject: email.subject,
+          body: email.body,
+          templateName: email.templateName,
+          mode: email.mode,
+          date: email.date,
+          prenom: email.prenom,
+          success: Boolean(serverResult?.success),
+          error: serverResult?.error || null,
+          resendId: serverResult?.id || null,
+        };
+      });
+
+      setSentLog((previous) => [...logs, ...previous]);
+      if (logs[0]) setOpenLogId(logs[0].id);
+
+      if (!response.ok || result.failed > 0) {
+        const firstError = result?.results?.find((item) => !item.success)?.error || result.error || `Erreur serveur ${response.status}`;
+        setMessage(`Envoi partiel ou refusé : ${firstError}`);
+        return;
+      }
+
+      setMessage(`${result.sent || logs.length} courriel(s) envoyé(s) via Resend.`);
     } catch (error) {
-      setMessage(`Envoi non confirmé : ${error.message}. Vérifie la fonction Netlify et la variable RESEND_API_KEY.`);
+      setMessage(`Envoi non confirmé : ${error.message}. Vérifie les logs Netlify de la fonction send-emails.`);
     }
   }
 
@@ -731,6 +782,15 @@ export default function App() {
                         <div className="font-semibold">{log.prenom || "Sans prénom"} — {log.email}</div>
                         <div className="text-sm text-yellow-300 mt-1">{log.subject}</div>
                         <div className="text-xs text-neutral-500 mt-1">{log.mode} · {log.date}</div>
+                        {log.success ? (
+                          <div className="text-xs text-green-300 mt-1">
+                            Envoyé via Resend {log.resendId ? `· ${log.resendId}` : ""}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-red-300 mt-1">
+                            Non confirmé {log.error ? `· ${log.error}` : ""}
+                          </div>
+                        )}
                       </button>
                       {open && (
                         <div className="border-t border-neutral-800 bg-white text-black">
