@@ -441,17 +441,30 @@ export default function SunfukiEmailToolPreview() {
   }, []);
 
   async function loadServerHistory() {
-    try {
-      const response = await fetch("/.netlify/functions/get-email-logs");
-      if (!response.ok) return;
-      const result = await response.json();
-      if (Array.isArray(result.logs)) {
-        setSentLog(result.logs.map(mapServerLog));
-      }
-    } catch (error) {
-      console.warn("Historique Supabase non chargé", error);
+  try {
+    setMessage("Chargement de l'historique partagé...");
+
+    const response = await fetch("/.netlify/functions/get-email-logs");
+    const result = await response.json().catch(() => ({}));
+
+    console.log("get-email-logs:", response.status, result);
+
+    if (!response.ok) {
+      setMessage(`Historique non chargé : ${result.error || `Erreur ${response.status}`}`);
+      return;
     }
+
+    if (!Array.isArray(result.logs)) {
+      setMessage("Historique non chargé : aucun tableau logs retourné.");
+      return;
+    }
+
+    setSentLog(result.logs.map(mapServerLog));
+    setMessage(`${result.logs.length} envoi(s) chargé(s) depuis Supabase.`);
+  } catch (error) {
+    setMessage(`Historique non chargé : ${error.message}`);
   }
+}
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || templates[0];
   const selectedRow = rows.find((row) => row.id === selectedRowId) || rows[0];
@@ -638,20 +651,20 @@ export default function SunfukiEmailToolPreview() {
           from: fromEmail,
           replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
-  orderNumber: email.orderNumber,
-  items: email.items,
-  to: email.to,
-  subject: email.subject,
-  html: htmlFromBody(email.body),
-  text: email.body,
-  originalEmail: email.originalEmail,
-  prenom: email.prenom,
-  competitor: email.competitor,
-  dojo: email.dojo,
-  equipe: email.equipe,
-  templateName: email.templateName,
-  mode: email.mode,
-})),
+            orderNumber: email.orderNumber,
+            items: email.items,
+            to: email.to,
+            subject: email.subject,
+            html: htmlFromBody(email.body),
+            text: email.body,
+            originalEmail: email.originalEmail,
+            prenom: email.prenom,
+            competitor: email.competitor,
+            dojo: email.dojo,
+            equipe: email.equipe,
+            templateName: email.templateName,
+            mode: email.mode,
+          })),
         }),
       });
 
