@@ -601,20 +601,32 @@ export default function SunfukiEmailToolPreview() {
 
     const now = new Date().toLocaleString("fr-CA");
     const emailsToSend = selectedRows.map((row) => ({
-      rowId: row.id,
-      orderNumber: row.raw?.Commande || "",
-      prenom: row.prenom,
-      competitor: row.competitor,
-      dojo: row.dojo,
-      equipe: row.equipe,
-      to: testMode ? testEmail : row.email,
-      originalEmail: row.email,
-      subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
-      body: renderTemplate(selectedTemplate.body, row, dateLimite),
-      templateName: selectedTemplate.name,
-      mode: testMode ? "TEST" : "RÉEL",
-      date: now,
-    }));
+  rowId: row.id,
+  orderNumber: row.raw?.Commande || "",
+  prenom: row.prenom,
+  competitor: row.competitor,
+  dojo: row.dojo,
+  equipe: row.equipe,
+  to: testMode ? testEmail : row.email,
+  originalEmail: row.email,
+  subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
+  body: renderTemplate(selectedTemplate.body, row, dateLimite),
+  templateName: selectedTemplate.name,
+  mode: testMode ? "TEST" : "RÉEL",
+  date: now,
+  items: row.produits
+    .filter((product) =>
+      clean(product.produit) &&
+      !clean(product.taille) &&
+      !clean(product.produit).toLowerCase().includes("engagement")
+    )
+    .map((product) => ({
+      product_name: product.produitBase || productBaseName(product.produit),
+      quantity: product.qte || "1",
+      current_size: product.taille || "",
+      needs_size: true,
+    })),
+}));
 
     try {
       const response = await fetch("/.netlify/functions/send-emails", {
@@ -626,19 +638,20 @@ export default function SunfukiEmailToolPreview() {
           from: fromEmail,
           replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
-            orderNumber: email.orderNumber,
-            to: email.to,
-            subject: email.subject,
-            html: htmlFromBody(email.body),
-            text: email.body,
-            originalEmail: email.originalEmail,
-            prenom: email.prenom,
-            competitor: email.competitor,
-            dojo: email.dojo,
-            equipe: email.equipe,
-            templateName: email.templateName,
-            mode: email.mode,
-          })),
+  orderNumber: email.orderNumber,
+  items: email.items,
+  to: email.to,
+  subject: email.subject,
+  html: htmlFromBody(email.body),
+  text: email.body,
+  originalEmail: email.originalEmail,
+  prenom: email.prenom,
+  competitor: email.competitor,
+  dojo: email.dojo,
+  equipe: email.equipe,
+  templateName: email.templateName,
+  mode: email.mode,
+})),
         }),
       });
 
