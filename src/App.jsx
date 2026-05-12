@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import ResponsePage from "./ResponsePage.jsx";
 
 const cutoffDate = new Date(2026, 4, 9);
 const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
@@ -372,6 +373,10 @@ if (typeof window !== "undefined") {
 }
 
 export default function SunfukiEmailToolPreview() {
+  if (window.location.pathname === "/reponse") {
+  return <ResponsePage />;
+}
+  
   const [rows, setRows] = useState(demoRows);
   const [headers, setHeaders] = useState(Object.keys(demoRows[0].raw));
   const [selectedIds, setSelectedIds] = useState(() => new Set(demoRows.filter(isEligibleOrder).map((row) => row.id)));
