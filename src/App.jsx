@@ -5,6 +5,7 @@ const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
 const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
 const REPLY_TO_DEFAULT = "commandes@boutique-karatesunfuki.com";
 const STORAGE_KEY = "sunfuki-email-tool-v1";
+const PANEL_IDS = ["connexion", "templates", "variables", "commandes", "preview", "envoi", "historique"];
 
 const defaultTemplates = [
   {
@@ -375,6 +376,7 @@ export default function SunfukiEmailToolPreview() {
   const [fromEmail, setFromEmail] = useState(FROM_EMAIL_DEFAULT);
   const [replyToEmail, setReplyToEmail] = useState(REPLY_TO_DEFAULT);
   const [storageReady, setStorageReady] = useState(false);
+  const [collapsedPanels, setCollapsedPanels] = useState(() => new Set(["variables"]));
 
   useEffect(() => {
     try {
@@ -470,6 +472,35 @@ export default function SunfukiEmailToolPreview() {
   const previewSubject = renderTemplate(selectedTemplate.subject, selectedRow, dateLimite);
   const previewBody = renderTemplate(selectedTemplate.body, selectedRow, dateLimite);
   const variables = ["prenom", "nom", "competiteur", "email", "equipe", "dojo", "date_commande", "liste_produits", "date_limite", ...headers];
+
+  function isPanelCollapsed(id) {
+    return collapsedPanels.has(id);
+  }
+
+  function togglePanel(id) {
+    setCollapsedPanels((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function panelProps(id) {
+    return {
+      collapsible: true,
+      collapsed: isPanelCollapsed(id),
+      onToggle: () => togglePanel(id),
+    };
+  }
+
+  function collapseSecondaryPanels() {
+    setCollapsedPanels(new Set(PANEL_IDS.filter((id) => id !== "commandes")));
+  }
+
+  function expandAllPanels() {
+    setCollapsedPanels(new Set());
+  }
 
   function toggleRow(id) {
     setSelectedIds((previous) => {
@@ -665,7 +696,12 @@ export default function SunfukiEmailToolPreview() {
 
         <InfoBox>{message}</InfoBox>
 
-        <Panel title="Connexion Resend / Netlify">
+        <div className="flex flex-wrap gap-2">
+          <button onClick={collapseSecondaryPanels} className="btn-dark">Réduire les blocs secondaires</button>
+          <button onClick={expandAllPanels} className="btn-dark">Tout afficher</button>
+        </div>
+
+        <Panel title="Connexion Resend / Netlify" {...panelProps("connexion")}>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-end">
             <Input label="Adresse expéditeur (FROM)" value={fromEmail} onChange={setFromEmail} />
             <Input label="Adresse de réponse (Reply-To)" value={replyToEmail} onChange={setReplyToEmail} />
@@ -690,14 +726,8 @@ export default function SunfukiEmailToolPreview() {
           <Metric title="Sélectionnées" value={selectedRows.length} icon="☑️" success />
         </div>
 
-        <Panel title="Mémoire de l'outil">
-          <div className="text-sm text-neutral-300 space-y-2">
-            <div>Les templates, la date limite, l'adresse test, le FROM et le Reply-To restent sauvegardés dans ce navigateur.</div>
-            <div>L'historique d'envoi est maintenant partagé et relu depuis Supabase pour tous les utilisateurs.</div>
-          </div>
-        </Panel>
 
-        <Panel title="Gestion des templates">
+        <Panel title="Gestion des templates" {...panelProps("templates")}>
           <div className="flex flex-wrap gap-2 mb-4">
             <button onClick={createTemplate} className="btn-gold">Ajouter</button>
             <button onClick={() => setEditingTemplate({ ...selectedTemplate })} className="btn-dark">Modifier</button>
@@ -727,7 +757,7 @@ export default function SunfukiEmailToolPreview() {
           )}
         </Panel>
 
-        <Panel title="Variables disponibles">
+        <Panel title="Variables disponibles" {...panelProps("variables")}>
           <button onClick={() => setShowVariables((value) => !value)} className="btn-dark mb-3">{showVariables ? "Masquer" : "Afficher"}</button>
           {showVariables && (
             <div className="flex flex-wrap gap-2">
@@ -739,7 +769,7 @@ export default function SunfukiEmailToolPreview() {
         </Panel>
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
-          <Panel className="xl:col-span-3" title="Commandes importées">
+          <Panel className="xl:col-span-3" title="Commandes importées" {...panelProps("commandes")}>
             <div className="flex flex-col lg:flex-row gap-2 mb-4">
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher..." className="input" />
               <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)} className="input lg:w-56">
@@ -818,7 +848,7 @@ export default function SunfukiEmailToolPreview() {
             </div>
           </Panel>
 
-          <Panel className="xl:col-span-2" title="Prévisualisation">
+          <Panel className="xl:col-span-2" title="Prévisualisation" {...panelProps("preview")}>
             <label className="block text-sm font-semibold mb-2">Template</label>
             <div className="flex gap-2 mb-4">
               <select value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} className="input">
@@ -849,7 +879,7 @@ export default function SunfukiEmailToolPreview() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Panel title="Envoi">
+          <Panel title="Envoi" {...panelProps("envoi")}>
             <div className="rounded-2xl bg-neutral-950 border border-neutral-800 p-4 mb-4 space-y-4">
               <label className="flex items-center justify-between gap-3 cursor-pointer">
                 <span><span className="font-semibold">Mode test</span><span className="block text-sm text-neutral-400">Envoie tout vers l'adresse de test configurée</span></span>
@@ -860,7 +890,7 @@ export default function SunfukiEmailToolPreview() {
             <button onClick={sendEmails} disabled={!selectedRows.length} className="btn-gold w-full disabled:opacity-50">Envoyer à {selectedRows.length} personne(s)</button>
           </Panel>
 
-          <Panel className="lg:col-span-2" title="Historique des envois">
+          <Panel className="lg:col-span-2" title="Historique des envois" {...panelProps("historique")}>
             <button onClick={loadServerHistory} className="btn-dark mb-4">Recharger l'historique partagé</button>
             {!sentLog.length ? (
               <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi enregistré.</div>
@@ -902,7 +932,7 @@ export default function SunfukiEmailToolPreview() {
         </div>
       </div>
 
-      <style>{`.btn-gold{background:#eab308;color:#111827;font-weight:700;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-gold:hover{background:#facc15}.btn-dark{background:#262626;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-dark:hover{background:#404040}.btn-red{background:#7f1d1d;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.input{width:100%;background:white;color:black;border:1px solid #d4d4d4;border-radius:1rem;padding:.75rem;outline:none}.input:focus{border-color:#eab308}`}</style>
+      <style>{`.btn-gold{background:#eab308;color:#111827;font-weight:700;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-gold:hover{background:#facc15}.btn-dark{background:#262626;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.btn-dark:hover{background:#404040}.btn-red{background:#7f1d1d;color:white;border-radius:1rem;padding:.7rem 1rem;border:0;cursor:pointer}.input{width:100%;background:white;color:black;border:1px solid #d4d4d4;border-radius:1rem;padding:.75rem;outline:none}.input:focus{border-color:#eab308}.btn-panel-toggle{display:inline-flex;align-items:center;gap:.45rem;background:#171717;color:#e5e5e5;border:1px solid #404040;border-radius:999px;padding:.45rem .8rem;font-size:.8rem;font-weight:700;cursor:pointer}.btn-panel-toggle:hover{background:#262626;border-color:#eab308;color:#facc15}`}</style>
     </div>
   );
 }
@@ -911,8 +941,23 @@ function InfoBox({ children }) {
   return <div className="rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-200 px-4 py-3 text-sm">{children}</div>;
 }
 
-function Panel({ title, children, className = "" }) {
-  return <section className={`bg-neutral-900 border border-neutral-800 rounded-3xl shadow-xl p-5 ${className}`}>{title && <h2 className="text-xl font-bold mb-4">{title}</h2>}{children}</section>;
+function Panel({ title, children, className = "", collapsible = false, collapsed = false, onToggle }) {
+  return (
+    <section className={`bg-neutral-900 border border-neutral-800 rounded-3xl shadow-xl p-5 ${className}`}>
+      {title && (
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 className="text-xl font-bold">{title}</h2>
+          {collapsible && (
+            <button type="button" onClick={onToggle} className="btn-panel-toggle" aria-expanded={!collapsed}>
+              {collapsed ? "Afficher" : "Réduire"}
+              <span className="text-lg leading-none">{collapsed ? "▾" : "▴"}</span>
+            </button>
+          )}
+        </div>
+      )}
+      {!collapsed && children}
+    </section>
+  );
 }
 
 function Metric({ title, value, icon, warning, success }) {
