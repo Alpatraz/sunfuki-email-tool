@@ -448,7 +448,8 @@ export default function SunfukiEmailToolPreview() {
     const result = await response.json().catch(() => ({}));
 
     console.log("get-email-logs:", response.status, result);
-
+alert(JSON.stringify(result, null, 2));
+    
     if (!response.ok) {
       setMessage(`Historique non chargé : ${result.error || `Erreur ${response.status}`}`);
       return;
