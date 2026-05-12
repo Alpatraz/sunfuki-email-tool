@@ -3,9 +3,7 @@ const RESEND_API_URL = "https://api.resend.com/emails";
 function json(statusCode, body) {
   return {
     statusCode,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-    },
+    headers: { "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify(body),
   };
 }
@@ -37,19 +35,27 @@ async function supabaseInsert(table, payload) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(
-      `Erreur Supabase ${table}: ${
-        data?.message || data?.error || response.status
-      }`
-    );
+    throw new Error(`Erreur Supabase ${table}: ${data?.message || data?.error || response.status}`);
   }
 
   return Array.isArray(data) ? data[0] : data;
 }
 
-function buildConfirmationButton(link) {
-  if (!link) return "";
+async function supabasePatchEmailLog(id, payload) {
+  if (!id) return;
 
+  await fetch(`${process.env.SUPABASE_URL}/rest/v1/email_logs?id=eq.${id}`, {
+    method: "PATCH",
+    headers: {
+      apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+function buildConfirmationButton(link) {
   return `
     <p style="margin:24px 0;">
       <a href="${htmlEscape(link)}" style="display:inline-block;background:#d4af37;color:#111;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;">
@@ -63,36 +69,37 @@ function injectConfirmationLink(html, confirmationLink) {
   if (!confirmationLink) return html;
 
   if (html.includes("{{confirmation_link}}")) {
-    return html.replaceAll("{{confirmation_link}}", confirmationLink);
+    return html.replaceAll("{{confirmation_link}}", buildConfirmationButton(confirmationLink));
   }
 
   return `${html}${buildConfirmationButton(confirmationLink)}`;
 }
 
+function injectConfirmationLinkText(text, confirmationLink) {
+  if (!confirmationLink) return text;
+
+  if (text.includes("{{confirmation_link}}")) {
+    return text.replaceAll("{{confirmation_link}}", confirmationLink);
+  }
+
+  return `${text}\n\nConfirmer mes tailles : ${confirmationLink}`;
+}
+
 function extractItems(email) {
-  if (Array.isArray(email.items) && email.items.length) {
-    return email.items
-      .map((item) => ({
-        product_name: clean(item.product_name || item.productName || item.produit || item.name),
-        quantity: clean(item.quantity || item.qte || item.qty || "1"),
-        current_size: clean(item.current_size || item.size || item.taille || ""),
-        needs_size: item.needs_size !== false,
-      }))
-      .filter((item) => item.product_name);
-  }
+  const source = Array.isArray(email.items)
+    ? email.items
+    : Array.isArray(email.products)
+      ? email.products
+      : [];
 
-  if (Array.isArray(email.products) && email.products.length) {
-    return email.products
-      .map((item) => ({
-        product_name: clean(item.product_name || item.productName || item.produit || item.name),
-        quantity: clean(item.quantity || item.qte || item.qty || "1"),
-        current_size: clean(item.current_size || item.size || item.taille || ""),
-        needs_size: item.needs_size !== false,
-      }))
-      .filter((item) => item.product_name);
-  }
-
-  return [];
+  return source
+    .map((item) => ({
+      product_name: clean(item.product_name || item.productName || item.produit || item.name),
+      quantity: clean(item.quantity || item.qte || item.qty || "1"),
+      current_size: clean(item.current_size || item.size || item.taille || ""),
+      needs_size: item.needs_size !== false,
+    }))
+    .filter((item) => item.product_name);
 }
 
 async function sendResendEmail({ apiKey, from, replyTo, to, subject, html, text }) {
@@ -156,12 +163,12 @@ export async function handler(event) {
     const to = clean(email.to);
     const subject = clean(email.subject);
     const text = String(email.text || "");
+    const html = String(email.html || "");
     const items = extractItems(email);
-
     let emailLog = null;
 
     try {
-      if (!to || !subject || !email.html) {
+      if (!to || !subject || !html) {
         throw new Error("Courriel invalide : to, subject ou html manquant.");
       }
 
@@ -169,6 +176,7 @@ export async function handler(event) {
         resend_id: null,
         recipient_email: to,
         original_email: clean(email.originalEmail || to),
+        order_number: clean(email.orderNumber || email.order_number),
         prenom: clean(email.prenom),
         competitor: clean(email.competitor),
         dojo: clean(email.dojo),
@@ -199,10 +207,8 @@ export async function handler(event) {
         );
       }
 
-      const htmlWithLink = injectConfirmationLink(String(email.html || ""), confirmationLink);
-      const textWithLink = confirmationLink
-        ? `${text}\n\nConfirmer mes tailles : ${confirmationLink}`
-        : text;
+      const htmlWithLink = injectConfirmationLink(html, confirmationLink);
+      const textWithLink = injectConfirmationLinkText(text, confirmationLink);
 
       const resendData = await sendResendEmail({
         apiKey,
@@ -214,28 +220,16 @@ export async function handler(event) {
         text: textWithLink,
       });
 
-      const resendId = resendData?.id || null;
-
-      if (emailLogId) {
-        await fetch(`${supabaseUrl}/rest/v1/email_logs?id=eq.${emailLogId}`, {
-          method: "PATCH",
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            resend_id: resendId,
-            status: "sent",
-            error: null,
-          }),
-        });
-      }
+      await supabasePatchEmailLog(emailLogId, {
+        resend_id: resendData?.id || null,
+        status: "sent",
+        error: null,
+      });
 
       results.push({
         to,
         success: true,
-        id: resendId,
+        id: resendData?.id || null,
         email_log_id: emailLogId,
         confirmation_link: confirmationLink,
       });
@@ -243,22 +237,15 @@ export async function handler(event) {
       const errorMessage = error.message || "Erreur inconnue";
 
       if (emailLog?.id) {
-        await fetch(`${supabaseUrl}/rest/v1/email_logs?id=eq.${emailLog.id}`, {
-          method: "PATCH",
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            status: "error",
-            error: errorMessage,
-          }),
+        await supabasePatchEmailLog(emailLog.id, {
+          status: "error",
+          error: errorMessage,
         }).catch(() => null);
       } else {
         await supabaseInsert("email_logs", {
           recipient_email: to,
           original_email: clean(email.originalEmail || to),
+          order_number: clean(email.orderNumber || email.order_number),
           prenom: clean(email.prenom),
           competitor: clean(email.competitor),
           dojo: clean(email.dojo),
