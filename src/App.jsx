@@ -12,7 +12,25 @@ const defaultTemplates = [
     id: "taille-probleme",
     name: "Confirmation de taille — problème technique",
     subject: "Action requise — Confirmation de taille pour ta commande d'équipement Karaté Sunfuki 2026/2027",
-    body: `Bonjour {{prenom}},\n\nMerci d'avoir passé ta commande d'équipement pour la saison 2026/2027 avec {{Équipe}} — Dojo de {{Dojo}}.\n\nEn raison d'une erreur technique de notre côté, les tailles n'ont pas été enregistrées correctement dans notre système pour les commandes passées avant le 9 mai 2026.\n\nAfin de préparer ta commande, nous avons besoin que tu nous confirmes ta taille pour chaque article commandé :\n\n{{liste_produits}}\n\nMerci de répondre à ce courriel avant le {{date_limite}} en indiquant ta taille pour chacun des articles ci-dessus.\n\nL'équipe Karaté Sunfuki`,
+    body: `Bonjour {{prenom}},
+
+Merci d'avoir passé ta commande d'équipement pour la saison 2026/2027 avec {{Équipe}} — Dojo de {{Dojo}}.
+
+En raison d'une erreur technique de notre côté, les tailles n'ont pas été enregistrées correctement dans notre système pour les commandes passées avant le 9 mai 2026.
+
+Afin de préparer ta commande, nous avons besoin que tu nous confirmes ta taille pour chaque article commandé :
+
+{{liste_produits}}
+
+Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
+
+{{confirmation_link}}
+
+Merci de compléter le formulaire avant le {{date_limite}}.
+
+Nous nous excusons pour ce désagrément.
+
+L'équipe Karaté Sunfuki`,
   },
   {
     id: "combine-probleme-technique-et-charte",
@@ -616,6 +634,14 @@ export default function SunfukiEmailToolPreview() {
       templateName: selectedTemplate.name,
       mode: testMode ? "TEST" : "RÉEL",
       date: now,
+      items: row.produits
+        .filter((product) => clean(product.produit) && !clean(product.taille) && !clean(product.produit).toLowerCase().includes("engagement"))
+        .map((product) => ({
+          product_name: product.produitBase || productBaseName(product.produit),
+          quantity: product.qte || "1",
+          current_size: product.taille || "",
+          needs_size: true,
+        })),
     }));
 
     try {
@@ -639,6 +665,7 @@ export default function SunfukiEmailToolPreview() {
             equipe: email.equipe,
             templateName: email.templateName,
             mode: email.mode,
+            items: email.items,
           })),
         }),
       });
