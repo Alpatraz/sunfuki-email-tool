@@ -524,11 +524,19 @@ export default function SunfukiEmailToolPreview() {
         body: JSON.stringify({
           from: fromEmail,
           emails: emailsToSend.map((email) => ({
-            to: email.to,
-            subject: email.subject,
-            html: htmlFromBody(email.body),
-            text: email.body,
-          })),
+  to: email.to,
+  subject: email.subject,
+  html: htmlFromBody(email.body),
+  text: email.body,
+
+  originalEmail: email.originalEmail,
+  prenom: email.prenom,
+  competitor: email.prenom,
+  dojo: selectedRow?.dojo || "",
+  equipe: selectedRow?.equipe || "",
+  templateName: email.templateName,
+  mode: email.mode,
+})),
         }),
       });
 
