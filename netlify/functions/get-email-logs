@@ -1,16 +1,20 @@
 function json(statusCode, body) {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+    },
     body: JSON.stringify(body),
   };
 }
 
 async function supabaseGet(path) {
   const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${path}`, {
+    method: "GET",
     headers: {
       apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
     },
   });
 
@@ -29,30 +33,48 @@ export async function handler(event) {
   }
 
   try {
-    const logs = await supabaseGet("email_logs?select=*&order=created_at.desc&limit=500");
-    const responses = await supabaseGet("responses?select=*&order=created_at.desc&limit=2000");
+    const logs = await supabaseGet(
+      "email_logs?select=*&order=created_at.desc&limit=500"
+    );
 
-    const responsesByEmailLogId = responses.reduce((acc, response) => {
-      if (!response.email_log_id) return acc;
-      if (!acc[response.email_log_id]) acc[response.email_log_id] = [];
-      acc[response.email_log_id].push(response);
-      return acc;
-    }, {});
+    const responses = await supabaseGet(
+      "responses?select=*&order=created_at.desc&limit=3000"
+    );
 
-    const enrichedLogs = logs.map((log) => ({
-      ...log,
-      responses: responsesByEmailLogId[log.id] || [],
-      has_response: Boolean(responsesByEmailLogId[log.id]?.length),
-      response_count: responsesByEmailLogId[log.id]?.length || 0,
-    }));
+    const responsesByLogId = {};
+
+    responses.forEach((response) => {
+      if (!response.email_log_id) return;
+
+      if (!responsesByLogId[response.email_log_id]) {
+        responsesByLogId[response.email_log_id] = [];
+      }
+
+      responsesByLogId[response.email_log_id].push(response);
+    });
+
+    const enrichedLogs = logs.map((log) => {
+      const logResponses = responsesByLogId[log.id] || [];
+
+      return {
+        ...log,
+        responses: logResponses,
+        has_response: logResponses.length > 0,
+        response_count: logResponses.length,
+      };
+    });
 
     return json(200, {
+      success: true,
       logs: enrichedLogs,
       total: enrichedLogs.length,
       answered: enrichedLogs.filter((log) => log.has_response).length,
       pending: enrichedLogs.filter((log) => !log.has_response).length,
     });
   } catch (error) {
-    return json(500, { error: error.message });
+    return json(500, {
+      success: false,
+      error: error.message,
+    });
   }
 }
