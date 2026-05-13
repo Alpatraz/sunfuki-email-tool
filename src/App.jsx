@@ -347,6 +347,7 @@ function mapServerLog(row) {
     mode: row.mode || "",
     date: row.created_at ? new Date(row.created_at).toLocaleString("fr-CA") : "",
     prenom: row.prenom || "",
+    competitor: row.competitor || "",
     dojo: row.dojo || "",
     equipe: row.equipe || "",
     success: row.status !== "error",
@@ -711,10 +712,42 @@ export default function SunfukiEmailToolPreview() {
       setMessage(`Envoi non confirmé : ${error.message}. Vérifie les logs Netlify de la fonction send-emails.`);
     }
   }
-
+  
   function exportResponsesCsv() {
     const exportRows = [];
 
+function exportPendingCsv() {
+  const pendingRows = dashboardFilteredLogs
+    .filter((log) => !log.hasResponse)
+    .map((log) => ({
+      nom: log.competitor || log.prenom || "",
+      commande: log.orderNumber || "",
+      courriel: log.originalEmail || log.email || "",
+      dojo: log.dojo || "",
+      equipe: log.equipe || "",
+      template: log.templateName || "",
+    }));
+
+  const headers = ["nom", "commande", "courriel", "dojo", "equipe", "template"];
+
+  const csv = [
+    headers.join(","),
+    ...pendingRows.map((row) =>
+      headers.map((header) => `"${String(row[header] || "").replaceAll('"', '""')}"`).join(",")
+    ),
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `non-repondus-sunfuki-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+    
     sentLog.forEach((log) => {
       if (!log.responses?.length) {
         exportRows.push({
@@ -905,6 +938,56 @@ const emailsByTemplate = useMemo(() => {
       </tbody>
     </table>
   </div>
+          <div className="mt-6 rounded-2xl border border-neutral-800 overflow-hidden">
+  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-neutral-950 border-b border-neutral-800 p-4">
+    <div>
+      <div className="font-bold">Personnes sans réponse</div>
+      <div className="text-sm text-neutral-400">
+        Liste filtrée selon le dojo et le statut sélectionnés.
+      </div>
+    </div>
+
+    <button onClick={exportPendingCsv} className="btn-gold">
+      Exporter les non-répondus
+    </button>
+  </div>
+
+  <div className="overflow-auto max-h-80">
+    <table className="w-full text-sm min-w-[800px]">
+      <thead className="bg-neutral-950 text-neutral-300 sticky top-0">
+        <tr>
+          <th className="p-3 text-left">Nom</th>
+          <th className="p-3 text-left">Commande</th>
+          <th className="p-3 text-left">Courriel</th>
+          <th className="p-3 text-left">Dojo</th>
+          <th className="p-3 text-left">Équipe</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {dashboardFilteredLogs.filter((log) => !log.hasResponse).length ? (
+          dashboardFilteredLogs
+            .filter((log) => !log.hasResponse)
+            .map((log) => (
+              <tr key={log.id} className="border-t border-neutral-800">
+                <td className="p-3">{log.competitor || log.prenom || "—"}</td>
+                <td className="p-3">{log.orderNumber || "—"}</td>
+                <td className="p-3">{log.originalEmail || log.email || "—"}</td>
+                <td className="p-3">{log.dojo || "—"}</td>
+                <td className="p-3">{log.equipe || "—"}</td>
+              </tr>
+            ))
+        ) : (
+          <tr>
+            <td colSpan={5} className="p-6 text-center text-neutral-500">
+              Aucun non-répondant avec ces filtres.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+</div>
 </Panel>
 
         <Panel title="Mémoire de l'outil">
