@@ -26,18 +26,7 @@ Afin de préparer ta commande, nous avons besoin que tu nous confirmes ta taille
 
 Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
 
-<div style="text-align:center;margin:30px 0;white-space:nowrap;">
-
-  <span style="display:inline-block;vertical-align:middle;margin-right:14px;">
     {{confirmation_link}}
-  </span>
-
-  <a href="https://boutique-karatesunfuki.com/pages/formulaire-de-commande"
-     style="display:inline-block;vertical-align:middle;background-color:#111;color:#fff;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;border:2px solid #d4af37;">
-     ➕ Ajouter des items
-  </a>
-
-</div>
 
 Si vous avez oublié des articles lors de votre commande initiale, vous pouvez utiliser ce formulaire pour effectuer une commande complémentaire.
 
