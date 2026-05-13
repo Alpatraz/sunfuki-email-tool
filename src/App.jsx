@@ -5,7 +5,7 @@ const cutoffDate = new Date(2026, 4, 9);
 const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
 const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
 const REPLY_TO_DEFAULT = "commandes@boutique-karatesunfuki.com";
-const STORAGE_KEY = "sunfuki-email-tool-v2";
+const STORAGE_KEY = "sunfuki-email-tool-v1";
 
 const defaultTemplates = [
   {
@@ -28,16 +28,9 @@ Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
 
 {{confirmation_link}}
 
-{{confirmation_link}}
-
-<a href="https://boutique-karatesunfuki.com/pages/formulaire-de-commande" style="display:inline-block;background-color:#111;color:#fff;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;border:2px solid #d4af37;">➕ Ajouter des items à ma commande</a>
-
-Si vous avez oublié des articles lors de votre commande initiale, vous pouvez utiliser ce formulaire pour effectuer une commande complémentaire.
-
 Merci de compléter le formulaire avant le {{date_limite}}.
 
 L'équipe Karaté Sunfuki`,
-
   },
   {
     id: "combine-probleme-technique-et-charte",
@@ -354,9 +347,6 @@ function mapServerLog(row) {
     mode: row.mode || "",
     date: row.created_at ? new Date(row.created_at).toLocaleString("fr-CA") : "",
     prenom: row.prenom || "",
-    competitor: row.competitor || "",
-    dojo: row.dojo || "",
-    equipe: row.equipe || "",
     success: row.status !== "error",
     error: row.error || null,
     resendId: row.resend_id || null,
@@ -413,8 +403,6 @@ export default function SunfukiEmailToolPreview() {
   const [fromEmail, setFromEmail] = useState(FROM_EMAIL_DEFAULT);
   const [replyToEmail, setReplyToEmail] = useState(REPLY_TO_DEFAULT);
   const [storageReady, setStorageReady] = useState(false);
-  const [dashboardDojoFilter, setDashboardDojoFilter] = useState("Tous");
-  const [dashboardStatusFilter, setDashboardStatusFilter] = useState("Tous");
 
   useEffect(() => {
     try {
@@ -453,30 +441,17 @@ export default function SunfukiEmailToolPreview() {
   }, []);
 
   async function loadServerHistory() {
-  try {
-    setMessage("Chargement de l'historique partagé...");
-
-    const response = await fetch("/.netlify/functions/get-email-logs");
-    const result = await response.json().catch(() => ({}));
-
-    console.log("get-email-logs:", response.status, result);
-    
-    if (!response.ok) {
-      setMessage(`Historique non chargé : ${result.error || `Erreur ${response.status}`}`);
-      return;
+    try {
+      const response = await fetch("/.netlify/functions/get-email-logs");
+      if (!response.ok) return;
+      const result = await response.json();
+      if (Array.isArray(result.logs)) {
+        setSentLog(result.logs.map(mapServerLog));
+      }
+    } catch (error) {
+      console.warn("Historique Supabase non chargé", error);
     }
-
-    if (!Array.isArray(result.logs)) {
-      setMessage("Historique non chargé : aucun tableau logs retourné.");
-      return;
-    }
-
-    setSentLog(result.logs.map(mapServerLog));
-    setMessage(`${result.logs.length} envoi(s) chargé(s) depuis Supabase.`);
-  } catch (error) {
-    setMessage(`Historique non chargé : ${error.message}`);
   }
-}
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || templates[0];
   const selectedRow = rows.find((row) => row.id === selectedRowId) || rows[0];
@@ -626,32 +601,20 @@ export default function SunfukiEmailToolPreview() {
 
     const now = new Date().toLocaleString("fr-CA");
     const emailsToSend = selectedRows.map((row) => ({
-  rowId: row.id,
-  orderNumber: row.raw?.Commande || "",
-  prenom: row.prenom,
-  competitor: row.competitor,
-  dojo: row.dojo,
-  equipe: row.equipe,
-  to: testMode ? testEmail : row.email,
-  originalEmail: row.email,
-  subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
-  body: renderTemplate(selectedTemplate.body, row, dateLimite),
-  templateName: selectedTemplate.name,
-  mode: testMode ? "TEST" : "RÉEL",
-  date: now,
-  items: row.produits
-    .filter((product) =>
-      clean(product.produit) &&
-      !clean(product.taille) &&
-      !clean(product.produit).toLowerCase().includes("engagement")
-    )
-    .map((product) => ({
-      product_name: product.produitBase || productBaseName(product.produit),
-      quantity: product.qte || "1",
-      current_size: product.taille || "",
-      needs_size: true,
-    })),
-}));
+      rowId: row.id,
+      orderNumber: row.raw?.Commande || "",
+      prenom: row.prenom,
+      competitor: row.competitor,
+      dojo: row.dojo,
+      equipe: row.equipe,
+      to: testMode ? testEmail : row.email,
+      originalEmail: row.email,
+      subject: renderTemplate(selectedTemplate.subject, row, dateLimite),
+      body: renderTemplate(selectedTemplate.body, row, dateLimite),
+      templateName: selectedTemplate.name,
+      mode: testMode ? "TEST" : "RÉEL",
+      date: now,
+    }));
 
     try {
       const response = await fetch("/.netlify/functions/send-emails", {
@@ -664,7 +627,6 @@ export default function SunfukiEmailToolPreview() {
           replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
             orderNumber: email.orderNumber,
-            items: email.items,
             to: email.to,
             subject: email.subject,
             html: htmlFromBody(email.body),
@@ -719,43 +681,11 @@ export default function SunfukiEmailToolPreview() {
       setMessage(`Envoi non confirmé : ${error.message}. Vérifie les logs Netlify de la fonction send-emails.`);
     }
   }
-  
-  function exportPendingCsv() {
-  const pendingRows = dashboardFilteredLogs
-    .filter((log) => !log.hasResponse)
-    .map((log) => ({
-      nom: log.competitor || log.prenom || "",
-      commande: log.orderNumber || "",
-      courriel: log.originalEmail || log.email || "",
-      dojo: log.dojo || "",
-      equipe: log.equipe || "",
-      template: log.templateName || "",
-    }));
 
-  const headers = ["nom", "commande", "courriel", "dojo", "equipe", "template"];
+  function exportResponsesCsv() {
+    const exportRows = [];
 
-  const csv = [
-    headers.join(","),
-    ...pendingRows.map((row) =>
-      headers.map((header) => `"${String(row[header] || "").replaceAll('"', '""')}"`).join(",")
-    ),
-  ].join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = `non-repondus-sunfuki-${new Date().toISOString().slice(0, 10)}.csv`;
-  link.click();
-
-  URL.revokeObjectURL(url);
-}
-
-function exportResponsesCsv() {
-  const exportRows = [];
-
-  sentLog.forEach((log) => {
+    sentLog.forEach((log) => {
       if (!log.responses?.length) {
         exportRows.push({
           commande: log.orderNumber || "",
@@ -801,46 +731,7 @@ function exportResponsesCsv() {
 
     URL.revokeObjectURL(url);
   }
-const dashboardDojos = useMemo(() => {
-  const values = sentLog
-    .map((log) => log.dojo)
-    .filter(Boolean);
 
-  return ["Tous", ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "fr"))];
-}, [sentLog]);
-
-const dashboardFilteredLogs = useMemo(() => {
-  return sentLog.filter((log) => {
-    const matchesDojo =
-      dashboardDojoFilter === "Tous" ||
-      log.dojo === dashboardDojoFilter;
-
-    const matchesStatus =
-      dashboardStatusFilter === "Tous" ||
-      (dashboardStatusFilter === "Répondu" && log.hasResponse) ||
-      (dashboardStatusFilter === "Non répondu" && !log.hasResponse);
-
-    return matchesDojo && matchesStatus;
-  });
-}, [sentLog, dashboardDojoFilter, dashboardStatusFilter]);
-
-const emailsByTemplate = useMemo(() => {
-  const stats = {};
-
-  dashboardFilteredLogs.forEach((log) => {
-    const key = log.templateName || "Sans template";
-
-    if (!stats[key]) {
-      stats[key] = 0;
-    }
-
-    stats[key] += 1;
-  });
-
-  return Object.entries(stats)
-    .sort((a, b) => b[1] - a[1]);
-}, [dashboardFilteredLogs]);
-  
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -882,120 +773,6 @@ const emailsByTemplate = useMemo(() => {
           <Metric title="Détectées auto" value={rows.filter(isEligibleOrder).length} icon="⚠️" warning />
           <Metric title="Sélectionnées" value={selectedRows.length} icon="☑️" success />
         </div>
-
-        <Panel title="Dashboard des envois">
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-    <Metric title="Courriels envoyés" value={dashboardFilteredLogs.length} icon="📨" />
-    <Metric title="Répondus" value={dashboardFilteredLogs.filter((log) => log.hasResponse).length} icon="✅" success />
-    <Metric title="Non répondus" value={dashboardFilteredLogs.filter((log) => !log.hasResponse).length} icon="⏳" warning />
-    <Metric
-      title="Taux de réponse"
-      value={
-        dashboardFilteredLogs.length
-          ? `${Math.round((dashboardFilteredLogs.filter((log) => log.hasResponse).length / dashboardFilteredLogs.length) * 100)}%`
-          : "0%"
-      }
-      icon="📊"
-    />
-  </div>
-
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-    <label className="block space-y-2">
-      <span className="text-sm font-semibold text-white">Filtrer par dojo</span>
-      <select value={dashboardDojoFilter} onChange={(event) => setDashboardDojoFilter(event.target.value)} className="input">
-        {dashboardDojos.map((dojo) => (
-          <option key={dojo} value={dojo}>{dojo}</option>
-        ))}
-      </select>
-    </label>
-
-    <label className="block space-y-2">
-      <span className="text-sm font-semibold text-white">Filtrer par statut</span>
-      <select value={dashboardStatusFilter} onChange={(event) => setDashboardStatusFilter(event.target.value)} className="input">
-        <option value="Tous">Tous</option>
-        <option value="Répondu">Répondu</option>
-        <option value="Non répondu">Non répondu</option>
-      </select>
-    </label>
-  </div>
-
-  <div className="rounded-2xl border border-neutral-800 overflow-hidden">
-    <table className="w-full text-sm">
-      <thead className="bg-neutral-950 text-neutral-300">
-        <tr>
-          <th className="p-3 text-left">Template</th>
-          <th className="p-3 text-right">Courriels envoyés</th>
-        </tr>
-      </thead>
-      <tbody>
-        {emailsByTemplate.length ? (
-          emailsByTemplate.map(([templateName, total]) => (
-            <tr key={templateName} className="border-t border-neutral-800">
-              <td className="p-3 font-medium">{templateName}</td>
-              <td className="p-3 text-right">{total}</td>
-            </tr>
-          ))
-        ) : (
-          <tr>
-            <td colSpan={2} className="p-6 text-center text-neutral-500">
-              Aucun envoi à afficher avec ces filtres.
-            </td>
-          </tr>
-        )}
-      </tbody>
-    </table>
-  </div>
-          <div className="mt-6 rounded-2xl border border-neutral-800 overflow-hidden">
-  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-neutral-950 border-b border-neutral-800 p-4">
-    <div>
-      <div className="font-bold">Personnes sans réponse</div>
-      <div className="text-sm text-neutral-400">
-        Liste filtrée selon le dojo et le statut sélectionnés.
-      </div>
-    </div>
-
-    <button onClick={exportPendingCsv} className="btn-gold">
-      Exporter les non-répondus
-    </button>
-  </div>
-
-  <div className="overflow-auto max-h-80">
-    <table className="w-full text-sm min-w-[800px]">
-      <thead className="bg-neutral-950 text-neutral-300 sticky top-0">
-        <tr>
-          <th className="p-3 text-left">Nom</th>
-          <th className="p-3 text-left">Commande</th>
-          <th className="p-3 text-left">Courriel</th>
-          <th className="p-3 text-left">Dojo</th>
-          <th className="p-3 text-left">Équipe</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {dashboardFilteredLogs.filter((log) => !log.hasResponse).length ? (
-          dashboardFilteredLogs
-            .filter((log) => !log.hasResponse)
-            .map((log) => (
-              <tr key={log.id} className="border-t border-neutral-800">
-                <td className="p-3">{log.competitor || log.prenom || "—"}</td>
-                <td className="p-3">{log.orderNumber || "—"}</td>
-                <td className="p-3">{log.originalEmail || log.email || "—"}</td>
-                <td className="p-3">{log.dojo || "—"}</td>
-                <td className="p-3">{log.equipe || "—"}</td>
-              </tr>
-            ))
-        ) : (
-          <tr>
-            <td colSpan={5} className="p-6 text-center text-neutral-500">
-              Aucun non-répondant avec ces filtres.
-            </td>
-          </tr>
-        )}
-      </tbody>
-    </table>
-  </div>
-</div>
-</Panel>
 
         <Panel title="Mémoire de l'outil">
           <div className="text-sm text-neutral-300 space-y-2">
