@@ -5,7 +5,7 @@ const cutoffDate = new Date(2026, 4, 9);
 const TEST_EMAIL_DEFAULT = "test@karatesunfuki.com";
 const FROM_EMAIL_DEFAULT = "Karaté Sunfuki <noreply@mail.boutique-karatesunfuki.com>";
 const REPLY_TO_DEFAULT = "commandes@boutique-karatesunfuki.com";
-const STORAGE_KEY = "sunfuki-email-tool-v1";
+const STORAGE_KEY = "sunfuki-email-tool-v2";
 
 const defaultTemplates = [
   {
