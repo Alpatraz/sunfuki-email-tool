@@ -713,10 +713,7 @@ export default function SunfukiEmailToolPreview() {
     }
   }
   
-  function exportResponsesCsv() {
-    const exportRows = [];
-
-function exportPendingCsv() {
+  function exportPendingCsv() {
   const pendingRows = dashboardFilteredLogs
     .filter((log) => !log.hasResponse)
     .map((log) => ({
@@ -747,8 +744,11 @@ function exportPendingCsv() {
 
   URL.revokeObjectURL(url);
 }
-    
-    sentLog.forEach((log) => {
+
+function exportResponsesCsv() {
+  const exportRows = [];
+
+  sentLog.forEach((log) => {
       if (!log.responses?.length) {
         exportRows.push({
           commande: log.orderNumber || "",
