@@ -28,9 +28,21 @@ Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
 
 {{confirmation_link}}
 
+<div style="margin-top:20px;">
+  <a href="https://boutique-karatesunfuki.com/pages/formulaire-de-commande" 
+     style="display:inline-block;background-color:#111;color:#fff;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;border:2px solid #d4af37;">
+     ➕ Ajouter des items à ma commande
+  </a>
+</div>
+
+<div style="margin-top:10px;font-size:14px;color:#666;">
+Si vous avez oublié des articles lors de votre commande initiale, vous pouvez utiliser ce formulaire pour effectuer une commande complémentaire.
+</div>
+
 Merci de compléter le formulaire avant le {{date_limite}}.
 
 L'équipe Karaté Sunfuki`,
+
   },
   {
     id: "combine-probleme-technique-et-charte",
