@@ -57,11 +57,44 @@ async function supabasePatchEmailLog(id, payload) {
 
 function buildConfirmationButton(link) {
   return `
-    <p style="margin:24px 0;">
-      <a href="${htmlEscape(link)}" style="display:inline-block;background:#d4af37;color:#111;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold;">
-        Confirmer mes tailles
-      </a>
-    </p>
+    <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:30px auto;">
+      <tr>
+
+        <td align="center" style="padding:0 8px;">
+          <a href="${htmlEscape(link)}"
+             style="
+               display:inline-block;
+               background:#d4af37;
+               color:#111;
+               padding:14px 24px;
+               border-radius:10px;
+               text-decoration:none;
+               font-weight:bold;
+               font-family:Arial,sans-serif;
+             ">
+             Confirmer mes tailles
+          </a>
+        </td>
+
+        <td align="center" style="padding:0 8px;">
+          <a href="https://boutique-karatesunfuki.com/pages/formulaire-de-commande"
+             style="
+               display:inline-block;
+               background:#111;
+               color:#fff;
+               padding:14px 24px;
+               border-radius:10px;
+               text-decoration:none;
+               font-weight:bold;
+               border:2px solid #d4af37;
+               font-family:Arial,sans-serif;
+             ">
+             ➕ Ajouter des items
+          </a>
+        </td>
+
+      </tr>
+    </table>
   `;
 }
 
