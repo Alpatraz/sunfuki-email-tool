@@ -38,13 +38,17 @@ async function supabaseInsert(table, payload) {
     throw new Error(`Erreur Supabase ${table}: ${data?.message || data?.error || response.status}`);
   }
 
+  return data;
+}
+
+function firstReturnedRow(data) {
   return Array.isArray(data) ? data[0] : data;
 }
 
 async function supabasePatchEmailLog(id, payload) {
   if (!id) return;
 
-  await fetch(`${process.env.SUPABASE_URL}/rest/v1/email_logs?id=eq.${id}`, {
+  const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/email_logs?id=eq.${id}`, {
     method: "PATCH",
     headers: {
       apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -53,13 +57,17 @@ async function supabasePatchEmailLog(id, payload) {
     },
     body: JSON.stringify(payload),
   });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(`Erreur Supabase PATCH email_logs: ${data?.message || data?.error || response.status}`);
+  }
 }
 
 function buildConfirmationButton(link) {
   return `
     <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:30px auto;">
       <tr>
-
         <td align="center" style="padding:0 8px;">
           <a href="${htmlEscape(link)}"
              style="
@@ -92,7 +100,6 @@ function buildConfirmationButton(link) {
              ➕ Ajouter des items
           </a>
         </td>
-
       </tr>
     </table>
   `;
@@ -118,6 +125,30 @@ function injectConfirmationLinkText(text, confirmationLink) {
   return `${text}\n\nConfirmer mes tailles : ${confirmationLink}`;
 }
 
+function extractItemsFromText(text) {
+  const lines = String(text || "").split(/\r?\n/);
+
+  return lines
+    .filter((line) => line.trim().startsWith("•"))
+    .map((line) => {
+      const cleaned = line.replace(/^•\s*/, "").trim();
+      const quantityMatch = cleaned.match(/(?:Qté|Qte|Quantité|Quantity)\s+(\d+)/i);
+
+      const productName = cleaned
+        .replace(/—\s*(?:Qté|Qte|Quantité|Quantity)\s+\d+/i, "")
+        .replace(/-\s*(?:Qté|Qte|Quantité|Quantity)\s+\d+/i, "")
+        .trim();
+
+      return {
+        product_name: productName,
+        quantity: quantityMatch?.[1] || "1",
+        current_size: "",
+        needs_size: true,
+      };
+    })
+    .filter((item) => item.product_name);
+}
+
 function extractItems(email) {
   const source = Array.isArray(email.items)
     ? email.items
@@ -125,7 +156,7 @@ function extractItems(email) {
       ? email.products
       : [];
 
-  return source
+  const directItems = source
     .map((item) => ({
       product_name: clean(item.product_name || item.productName || item.produit || item.name),
       quantity: clean(item.quantity || item.qte || item.qty || "1"),
@@ -133,6 +164,10 @@ function extractItems(email) {
       needs_size: item.needs_size !== false,
     }))
     .filter((item) => item.product_name);
+
+  if (directItems.length) return directItems;
+
+  return extractItemsFromText(email.text || email.body || "");
 }
 
 async function sendResendEmail({ apiKey, from, replyTo, to, subject, html, text }) {
@@ -198,6 +233,13 @@ export async function handler(event) {
     const text = String(email.text || "");
     const html = String(email.html || "");
     const items = extractItems(email);
+
+    console.log("EMAIL ITEMS DEBUG", {
+      to,
+      itemsReceived: email.items,
+      extractedItems: items,
+    });
+
     let emailLog = null;
 
     try {
@@ -205,22 +247,24 @@ export async function handler(event) {
         throw new Error("Courriel invalide : to, subject ou html manquant.");
       }
 
-      emailLog = await supabaseInsert("email_logs", {
-        resend_id: null,
-        recipient_email: to,
-        original_email: clean(email.originalEmail || to),
-        order_number: clean(email.orderNumber || email.order_number),
-        prenom: clean(email.prenom),
-        competitor: clean(email.competitor),
-        dojo: clean(email.dojo),
-        equipe: clean(email.equipe),
-        subject,
-        body: text,
-        template_name: clean(email.templateName),
-        status: "pending",
-        error: null,
-        mode: clean(email.mode),
-      });
+      emailLog = firstReturnedRow(
+        await supabaseInsert("email_logs", {
+          resend_id: null,
+          recipient_email: to,
+          original_email: clean(email.originalEmail || to),
+          order_number: clean(email.orderNumber || email.order_number),
+          prenom: clean(email.prenom),
+          competitor: clean(email.competitor),
+          dojo: clean(email.dojo),
+          equipe: clean(email.equipe),
+          subject,
+          body: text,
+          template_name: clean(email.templateName),
+          status: "pending",
+          error: null,
+          mode: clean(email.mode),
+        })
+      );
 
       const emailLogId = emailLog?.id;
       const confirmationLink = emailLogId
@@ -233,9 +277,9 @@ export async function handler(event) {
           items.map((item) => ({
             email_log_id: emailLogId,
             product_name: item.product_name,
-            quantity: item.quantity,
-            current_size: item.current_size,
-            needs_size: item.needs_size,
+            quantity: item.quantity || "1",
+            current_size: item.current_size || "",
+            needs_size: item.needs_size !== false,
           }))
         );
       }
@@ -265,6 +309,7 @@ export async function handler(event) {
         id: resendData?.id || null,
         email_log_id: emailLogId,
         confirmation_link: confirmationLink,
+        items_count: items.length,
       });
     } catch (error) {
       const errorMessage = error.message || "Erreur inconnue";
@@ -296,6 +341,7 @@ export async function handler(event) {
         to,
         success: false,
         error: errorMessage,
+        items_count: items.length,
       });
     }
   }
