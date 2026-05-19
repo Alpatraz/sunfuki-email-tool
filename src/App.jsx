@@ -26,7 +26,7 @@ Afin de préparer ta commande, nous avons besoin que tu nous confirmes ta taille
 
 Merci de cliquer sur le bouton ci-dessous pour confirmer tes tailles :
 
-    {{confirmation_link}}
+{{confirmation_link}}
 
 Si vous avez oublié des articles lors de votre commande initiale, vous pouvez utiliser ce formulaire pour effectuer une commande complémentaire.
 
@@ -348,7 +348,12 @@ function mapServerLog(row) {
     templateName: row.template_name || "",
     mode: row.mode || "",
     date: row.created_at ? new Date(row.created_at).toLocaleString("fr-CA") : "",
+    createdAt: row.created_at || "",
+    sentAt: row.sent_at || row.created_at || "",
     prenom: row.prenom || "",
+    competitor: row.competitor || "",
+    dojo: row.dojo || "",
+    equipe: row.equipe || "",
     success: row.status !== "error",
     error: row.error || null,
     resendId: row.resend_id || null,
@@ -405,6 +410,8 @@ export default function SunfukiEmailToolPreview() {
   const [fromEmail, setFromEmail] = useState(FROM_EMAIL_DEFAULT);
   const [replyToEmail, setReplyToEmail] = useState(REPLY_TO_DEFAULT);
   const [storageReady, setStorageReady] = useState(false);
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
 
   useEffect(() => {
     try {
@@ -444,14 +451,24 @@ export default function SunfukiEmailToolPreview() {
 
   async function loadServerHistory() {
     try {
+      setMessage("Chargement de l'historique partagé...");
+
       const response = await fetch("/.netlify/functions/get-email-logs");
-      if (!response.ok) return;
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setMessage(`Historique non chargé : ${result.error || `Erreur ${response.status}`}`);
+        return;
+      }
+
       if (Array.isArray(result.logs)) {
         setSentLog(result.logs.map(mapServerLog));
+        setMessage(`${result.logs.length} envoi(s) chargé(s) depuis Supabase.`);
+      } else {
+        setMessage("Historique non chargé : aucun tableau logs retourné.");
       }
     } catch (error) {
-      console.warn("Historique Supabase non chargé", error);
+      setMessage(`Historique non chargé : ${error.message}`);
     }
   }
 
@@ -500,6 +517,38 @@ export default function SunfukiEmailToolPreview() {
   const previewSubject = renderTemplate(selectedTemplate.subject, selectedRow, dateLimite);
   const previewBody = renderTemplate(selectedTemplate.body, selectedRow, dateLimite);
   const variables = ["prenom", "nom", "competiteur", "email", "equipe", "dojo", "date_commande", "commande", "liste_produits", "date_limite", ...headers];
+
+  const historyFilteredLogs = useMemo(() => {
+    return sentLog.filter((log) => {
+      const rawDate = log.createdAt || log.sentAt || log.date;
+      if (!rawDate) return true;
+
+      const parsedDate = new Date(rawDate);
+      if (Number.isNaN(parsedDate.getTime())) return true;
+
+      if (historyDateFrom) {
+        const from = new Date(`${historyDateFrom}T00:00:00`);
+        if (parsedDate < from) return false;
+      }
+
+      if (historyDateTo) {
+        const to = new Date(`${historyDateTo}T23:59:59`);
+        if (parsedDate > to) return false;
+      }
+
+      return true;
+    });
+  }, [sentLog, historyDateFrom, historyDateTo]);
+
+  const historyStats = useMemo(() => {
+    const total = historyFilteredLogs.length;
+    const sent = historyFilteredLogs.filter((log) => log.success).length;
+    const answered = historyFilteredLogs.filter((log) => log.hasResponse).length;
+    const pending = historyFilteredLogs.filter((log) => log.success && !log.hasResponse).length;
+    const failed = historyFilteredLogs.filter((log) => !log.success).length;
+
+    return { total, sent, answered, pending, failed };
+  }, [historyFilteredLogs]);
 
   function toggleRow(id) {
     setSelectedIds((previous) => {
@@ -616,6 +665,19 @@ export default function SunfukiEmailToolPreview() {
       templateName: selectedTemplate.name,
       mode: testMode ? "TEST" : "RÉEL",
       date: now,
+      items: row.produits
+        .filter(
+          (product) =>
+            clean(product.produit) &&
+            !clean(product.taille) &&
+            !clean(product.produit).toLowerCase().includes("engagement")
+        )
+        .map((product) => ({
+          product_name: product.produitBase || productBaseName(product.produit),
+          quantity: product.qte || "1",
+          current_size: product.taille || "",
+          needs_size: true,
+        })),
     }));
 
     try {
@@ -629,6 +691,7 @@ export default function SunfukiEmailToolPreview() {
           replyTo: replyToEmail,
           emails: emailsToSend.map((email) => ({
             orderNumber: email.orderNumber,
+            items: email.items,
             to: email.to,
             subject: email.subject,
             html: htmlFromBody(email.body),
@@ -657,7 +720,12 @@ export default function SunfukiEmailToolPreview() {
           templateName: email.templateName,
           mode: email.mode,
           date: email.date,
+          createdAt: new Date().toISOString(),
+          sentAt: new Date().toISOString(),
           prenom: email.prenom,
+          competitor: email.competitor,
+          dojo: email.dojo,
+          equipe: email.equipe,
           success: Boolean(serverResult?.success),
           error: serverResult?.error || null,
           resendId: serverResult?.id || null,
@@ -760,13 +828,6 @@ export default function SunfukiEmailToolPreview() {
               {resendConnected ? "Prêt à envoyer via la fonction Netlify" : "Fonction Netlify non activée dans l'interface"}
             </div>
           </div>
-          <div className="mt-4 rounded-2xl bg-neutral-950 border border-neutral-800 p-4 text-sm text-neutral-300">
-            <div className="font-semibold text-white mb-2">Important</div>
-            <div>La clé API Resend ne doit pas être dans React. Elle doit être ajoutée dans Netlify comme variable d'environnement : RESEND_API_KEY.</div>
-            <div>Le frontend appelle : /.netlify/functions/send-emails</div>
-            <div>L'historique partagé est chargé depuis : /.netlify/functions/get-email-logs</div>
-            <div>Les réponses clients iront vers l'adresse Reply-To configurée ci-dessus.</div>
-          </div>
         </Panel>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -779,7 +840,7 @@ export default function SunfukiEmailToolPreview() {
         <Panel title="Mémoire de l'outil">
           <div className="text-sm text-neutral-300 space-y-2">
             <div>Les templates, la date limite, l'adresse test, le FROM et le Reply-To restent sauvegardés dans ce navigateur.</div>
-            <div>L'historique d'envoi est maintenant partagé et relu depuis Supabase pour tous les utilisateurs.</div>
+            <div>L'historique d'envoi est partagé et relu depuis Supabase pour tous les utilisateurs.</div>
           </div>
         </Panel>
 
@@ -920,17 +981,6 @@ export default function SunfukiEmailToolPreview() {
               </div>
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed p-4 max-h-[300px] overflow-auto">{previewBody}</pre>
             </div>
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden mt-4">
-              <div className="p-3 border-b border-neutral-800 font-semibold">Données complètes</div>
-              <div className="max-h-72 overflow-auto p-3 space-y-2">
-                {headers.map((header) => (
-                  <div key={header} className="grid grid-cols-3 gap-2 text-xs border-b border-neutral-800 pb-2">
-                    <div className="text-neutral-400 break-words">{header}</div>
-                    <div className="col-span-2 break-words">{selectedRow?.raw?.[header] || "—"}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </Panel>
         </div>
 
@@ -949,34 +999,64 @@ export default function SunfukiEmailToolPreview() {
           <Panel className="lg:col-span-2" title="Historique des envois">
             <button onClick={loadServerHistory} className="btn-dark mb-4">Recharger l'historique partagé</button>
             <button onClick={exportResponsesCsv} className="btn-gold mb-4 ml-2">Exporter CSV</button>
-            {!sentLog.length ? (
-              <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi enregistré.</div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4 mb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <Input label="Date début" type="date" value={historyDateFrom} onChange={setHistoryDateFrom} />
+                <Input label="Date fin" type="date" value={historyDateTo} onChange={setHistoryDateTo} />
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+                  <div className="text-xs text-neutral-400">Total</div>
+                  <div className="text-2xl font-bold">{historyStats.total}</div>
+                </div>
+
+                <div className="rounded-xl border border-green-500/30 bg-green-500/10 text-green-300 p-3">
+                  <div className="text-xs opacity-80">Envoyés</div>
+                  <div className="text-2xl font-bold">{historyStats.sent}</div>
+                </div>
+
+                <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-300 p-3">
+                  <div className="text-xs opacity-80">Répondus</div>
+                  <div className="text-2xl font-bold">{historyStats.answered}</div>
+                </div>
+
+                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 text-yellow-300 p-3">
+                  <div className="text-xs opacity-80">En attente</div>
+                  <div className="text-2xl font-bold">{historyStats.pending}</div>
+                </div>
+
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-300 p-3">
+                  <div className="text-xs opacity-80">Échecs</div>
+                  <div className="text-2xl font-bold">{historyStats.failed}</div>
+                </div>
+              </div>
+            </div>
+
+            {!historyFilteredLogs.length ? (
+              <div className="rounded-2xl border border-dashed border-neutral-700 p-8 text-center text-neutral-500">Aucun envoi enregistré avec ces filtres.</div>
             ) : (
               <div className="space-y-3 max-h-[650px] overflow-auto pr-1">
-                {sentLog.map((log) => {
+                {historyFilteredLogs.map((log) => {
                   const open = openLogId === log.id;
                   return (
                     <div key={log.id} className="rounded-2xl bg-neutral-950 border border-neutral-800 overflow-hidden">
                       <button type="button" onClick={() => setOpenLogId(open ? null : log.id)} className="w-full text-left p-4 hover:bg-neutral-900">
                         <div className="font-semibold">{log.prenom || "Sans prénom"} — {log.email}</div>
                         <div className="text-sm text-yellow-300 mt-1">{log.subject}</div>
-                        <div className="text-xs text-neutral-400 mt-1">
-                          Commande : {log.orderNumber || "—"}
-                        </div>
+                        <div className="text-xs text-neutral-400 mt-1">Commande : {log.orderNumber || "—"}</div>
                         <div className={log.hasResponse ? "text-xs text-green-300 mt-1" : "text-xs text-yellow-300 mt-1"}>
                           {log.hasResponse ? `Répondu — ${log.responseCount} taille(s) confirmée(s)` : "En attente de réponse"}
                         </div>
                         <div className="text-xs text-neutral-500 mt-1">{log.mode} · {log.date}</div>
                         {log.success ? (
-                          <div className="text-xs text-green-300 mt-1">
-                            Envoyé via Resend {log.resendId ? `· ${log.resendId}` : ""}
-                          </div>
+                          <div className="text-xs text-green-300 mt-1">Envoyé via Resend {log.resendId ? `· ${log.resendId}` : ""}</div>
                         ) : (
-                          <div className="text-xs text-red-300 mt-1">
-                            Non confirmé {log.error ? `· ${log.error}` : ""}
-                          </div>
+                          <div className="text-xs text-red-300 mt-1">Non confirmé {log.error ? `· ${log.error}` : ""}</div>
                         )}
                       </button>
+
                       {open && (
                         <div className="border-t border-neutral-800 bg-white text-black">
                           <div className="bg-neutral-100 border-b p-4">
